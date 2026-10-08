@@ -47,6 +47,11 @@ export type BingoSocket = Socket;
 
 function getSocketBackendUrl() {
   if (typeof window !== 'undefined') {
+    const envBackend = (import.meta as any).env?.VITE_SERVER_URL || (import.meta as any).env?.VITE_BACKEND_URL;
+    if (envBackend && typeof envBackend === 'string' && envBackend.startsWith('http')) {
+      return envBackend.replace(/\/$/, '');
+    }
+
     const qp = new URLSearchParams(window.location.search);
     const hashParams = new URLSearchParams(window.location.hash.slice(1));
     const explicitUrl =
@@ -82,9 +87,9 @@ export function connectBingoSocket(initData: string): BingoSocket {
     auth: { initData: safeInitData },
     autoConnect: true,
     reconnection: true,
-    reconnectionAttempts: 10,
+    reconnectionAttempts: 15,
     reconnectionDelay: 1000,
-    transports: ['polling', 'websocket'],
+    transports: ['websocket', 'polling'],
   });
 }
 

@@ -2582,40 +2582,19 @@ async function startServer() {
   const app = express();
   const httpServer = createServer(app);
   const PORT = Number(process.env.PORT) || 3000;
-  const configuredClientUrl = process.env.CLIENT_URL ? process.env.CLIENT_URL.trim().replace(/\/$/, '') : '';
   const socketServer = new SocketServer(httpServer, {
     cors: {
-      origin: configuredClientUrl || '*',
+      origin: (_origin, callback) => callback(null, true),
       methods: ['GET', 'POST'],
       credentials: true,
     },
-    transports: ['polling', 'websocket'],
+    transports: ['websocket', 'polling'],
   });
   attachBingoRooms(socketServer, process.env.BOT_TOKEN || process.env.TELEGRAM_BOT_TOKEN || '');
 
-  // Enable Dynamic CORS (allowing CLIENT_URL, localhost, and Vercel domains)
-  const allowedOrigins = [
-    configuredClientUrl,
-    'https://salery-bingo-1.vercel.app',
-    'http://localhost:3000',
-    'http://localhost:5173',
-  ].filter(Boolean);
-
   app.use(
     cors({
-      origin: (origin, callback) => {
-        if (!origin) return callback(null, true);
-        if (
-          !configuredClientUrl ||
-          allowedOrigins.includes(origin) ||
-          origin.endsWith('.vercel.app') ||
-          origin.includes('localhost') ||
-          process.env.NODE_ENV !== 'production'
-        ) {
-          return callback(null, true);
-        }
-        return callback(null, true);
-      },
+      origin: (_origin, callback) => callback(null, true),
       methods: ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS'],
       allowedHeaders: ['Content-Type', 'Authorization', 'x-bot-token'],
       credentials: true,

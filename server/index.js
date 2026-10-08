@@ -277,13 +277,17 @@ var LocalSecureDatabase = class {
       const updated = {
         ...existing,
         ...user,
-        balance: user.balance !== void 0 ? user.balance : existing.balance,
+        balance: user.balance !== void 0 ? user.balance : user.main_wallet !== void 0 ? user.main_wallet : existing.balance,
+        main_wallet: user.main_wallet !== void 0 ? user.main_wallet : existing.main_wallet ?? existing.balance,
+        play_wallet: user.play_wallet !== void 0 ? user.play_wallet : existing.play_wallet ?? 0,
         updated_at: (/* @__PURE__ */ new Date()).toISOString()
       };
       this.data.users[key] = updated;
       this.scheduleSave();
       return updated;
     } else {
+      const initialMain = user.main_wallet !== void 0 ? user.main_wallet : user.balance !== void 0 ? user.balance : 0;
+      const initialPlay = user.play_wallet !== void 0 ? user.play_wallet : 10;
       const newUser = {
         id: Date.now(),
         telegram_id: key,
@@ -292,7 +296,9 @@ var LocalSecureDatabase = class {
         full_name: user.full_name || user.first_name || "Player",
         username: user.username || "",
         phone_number: user.phone_number || "",
-        balance: user.balance !== void 0 ? user.balance : 100,
+        balance: initialMain,
+        main_wallet: initialMain,
+        play_wallet: initialPlay,
         role: user.role || "user",
         status: user.status || "active",
         is_blocked: !!user.is_blocked,
@@ -312,11 +318,25 @@ var LocalSecureDatabase = class {
       return newUser;
     }
   }
+  updateUserWallets(telegramId, mainWallet, playWallet) {
+    const key = String(telegramId);
+    const user = this.data.users[key];
+    if (user) {
+      user.main_wallet = Math.max(0, Math.floor(mainWallet));
+      user.play_wallet = Math.max(0, Math.floor(playWallet));
+      user.balance = user.main_wallet;
+      user.updated_at = (/* @__PURE__ */ new Date()).toISOString();
+      this.scheduleSave();
+      return true;
+    }
+    return false;
+  }
   updateUserBalance(telegramId, newBalance, _options) {
     const key = String(telegramId);
     const user = this.data.users[key];
     if (user) {
-      user.balance = Math.max(0, newBalance);
+      user.balance = Math.max(0, Math.floor(newBalance));
+      user.main_wallet = user.balance;
       user.updated_at = (/* @__PURE__ */ new Date()).toISOString();
       this.scheduleSave();
       return true;
@@ -928,19 +948,20 @@ async function setPostgresUserBalance(telegramId, balance) {
   );
   return result.rows[0] ? Number(result.rows[0].balance) : null;
 }
-async function getPostgresBingoRoom(roomId) {
+async function setPostgresUserWallets(telegramId, mainWallet, playWallet) {
   const client = getPool();
   if (!client) return null;
   await ensureSchema(client);
-  const result = await client.query("SELECT state FROM public.bingo_rooms WHERE room_id = $1", [roomId]);
-  return result.rows[0]?.state || null;
-}
-async function listPostgresBingoRooms() {
-  const client = getPool();
-  if (!client) return [];
-  await ensureSchema(client);
-  const result = await client.query("SELECT room_id, state FROM public.bingo_rooms WHERE state->>'status' IN ('waiting', 'in_progress', 'finished')");
-  return result.rows.map((row) => ({ roomId: row.room_id, state: row.state }));
+  const result = await client.query(
+    "UPDATE public.users SET balance = $2, main_wallet = $2, play_wallet = $3, updated_at = NOW() WHERE telegram_id = $1 RETURNING balance, main_wallet, play_wallet",
+    [String(telegramId), Math.max(0, Math.floor(mainWallet)), Math.max(0, Math.floor(playWallet))]
+  );
+  if (!result.rows[0]) return null;
+  return {
+    balance: Number(result.rows[0].balance),
+    mainWallet: Number(result.rows[0].main_wallet),
+    playWallet: Number(result.rows[0].play_wallet)
+  };
 }
 async function joinPostgresBingoRoom(input) {
   const poolClient = getPool();
@@ -988,7 +1009,7 @@ async function joinPostgresBingoRoom(input) {
         duplicate: true
       };
     }
-    if (state.status !== "waiting" || Date.now() >= state.startsAt) {
+    if (state.status !== "waiting" && (state.status !== "in_progress" || state.called.length > 5)) {
       throw new Error("This game has already started");
     }
     const reserved = new Set(state.players.flatMap((player) => player.cardIds));
@@ -1080,7 +1101,7 @@ async function awardPostgresBingoPrize(roomId, telegramId, cardId, prize) {
     const state = roomResult.rows[0]?.state;
     const player = state?.players.find((entry) => entry.telegramId === telegramId && entry.cardIds.includes(cardId));
     const finalDrawClaim = state?.status === "finished" && !state.winnerId && state.called.length === 75;
-    if (!state || state.status !== "in_progress" && !finalDrawClaim || !player || player.walletType === "play_wallet" || prize < 0 || prize > state.prizePool) {
+    if (!state || state.status !== "in_progress" && !finalDrawClaim || !player || prize < 0 || prize > state.prizePool) {
       await client.query("ROLLBACK");
       return null;
     }
@@ -1274,15 +1295,9 @@ async function deletePostgresTransaction(id) {
 
 // server/bingo.ts
 var ROOM_JOIN_WINDOW_MS = 35e3;
-var BALL_INTERVAL_MS = 3800;
+var BALL_INTERVAL_MS = 3e3;
 var MAX_INIT_DATA_AGE_SECONDS = 86400;
-var VALID_STAKES = /* @__PURE__ */ new Set([10, 25, 50, 100, 250]);
-function isLocalDevMockAllowed() {
-  return true;
-}
-function isLocalDevOrigin(origin) {
-  return true;
-}
+var VALID_STAKES = /* @__PURE__ */ new Set([10]);
 function validateTelegramInitData(initData, botToken, allowLocalMock = true) {
   if (typeof initData === "string" && initData.startsWith("mock:")) {
     const rawId = initData.slice(5).trim();
@@ -1343,10 +1358,13 @@ function roomIdForStake(stake = 10) {
 function publicRoomState(state, onlineIds = /* @__PURE__ */ new Set()) {
   const onlinePlayers = new Set(onlineIds);
   const totalCards = state.players.reduce((total, p) => total + (p.cardIds?.length || 1), 0);
-  const calculatedPrize = Math.max(
-    Math.floor(state.prizePool),
-    Math.floor(totalCards * state.stake * 0.8)
-  );
+  const calculatedPrize = Math.floor(Math.max(totalCards, 1) * state.stake * 0.8);
+  const takenCartelas = {};
+  state.players.forEach((p) => {
+    p.cardIds?.forEach((cid) => {
+      takenCartelas[cid] = p.name || "Player";
+    });
+  });
   return {
     gameId: state.gameId,
     stake: state.stake,
@@ -1356,11 +1374,13 @@ function publicRoomState(state, onlineIds = /* @__PURE__ */ new Set()) {
     prizePool: calculatedPrize,
     playerCount: Math.max(state.players.length, 1),
     totalCards,
+    takenCartelas,
     players: state.players.map(({ telegramId, name, cardIds }) => ({
       name,
       cardsCount: cardIds.length,
       isOnline: onlinePlayers.has(telegramId)
     })),
+    winnerId: state.winnerId,
     winnerName: state.players.find((player) => player.telegramId === state.winnerId)?.name,
     winningCardId: state.winningCardId,
     prize: state.prize || calculatedPrize
@@ -1378,456 +1398,565 @@ function getOnlinePlayerIds(io, roomId) {
 function sendRoomState(io, roomId, state) {
   io.to(roomId).emit("room:state", publicRoomState(state, getOnlinePlayerIds(io, roomId)));
 }
-function emitRoomLifecycle(io, roomId, previousState, nextState) {
-  if (previousState?.status !== "in_progress" && nextState.status === "in_progress") {
-    io.to(roomId).emit("gameStarted", {
-      gameId: nextState.gameId,
-      startedAt: nextState.startsAt,
-      stake: nextState.stake,
-      called: nextState.called
-    });
-  }
-  const previousCount = previousState?.called.length ?? 0;
-  for (let index = previousCount; index < nextState.called.length; index += 1) {
-    const number = nextState.called[index];
-    io.to(roomId).emit("numberDrawn", {
-      gameId: nextState.gameId,
-      number,
-      called: nextState.called,
-      time: Date.now()
-    });
-  }
-}
-function findFirstWinningCard(state) {
-  const called = new Set(state.called);
-  for (const player of state.players) {
-    if (player.walletType === "play_wallet") continue;
-    for (const cardId of player.cardIds) {
-      const card = generateCartelaByNumber(cardId);
-      const verifiedCard = {
-        ...card,
-        cells: card.cells.map((row) => row.map((cell) => ({
-          ...cell,
-          isDaubed: cell.isFree || called.has(cell.number)
-        })))
-      };
-      const win = checkCardWinningPatterns(verifiedCard, "en");
-      if (win.hasWon) {
-        return { telegramId: player.telegramId, cardId, win };
-      }
-    }
-  }
-  return null;
-}
 function attachBingoRooms(io, botToken) {
-  const timers = /* @__PURE__ */ new Map();
   const localRooms = /* @__PURE__ */ new Map();
-  const getLocalBalance = (telegramId) => {
-    const u = localDb.getUser(telegramId);
-    if (u && typeof u.balance === "number") return u.balance;
-    return String(telegramId) === "908336796" ? 24560 : 0;
-  };
-  const setLocalBalance = (telegramId, newBalance) => {
-    const clamped = Math.max(0, Math.floor(newBalance));
-    localDb.updateUserBalance(telegramId, clamped);
-    return clamped;
-  };
-  io.use(async (socket, next) => {
-    const initData = String(socket.handshake.auth?.initData || "");
-    const localMode = isLocalDevOrigin(socket.handshake.headers.origin) || !isPostgresConfigured();
-    const player = validateTelegramInitData(initData, botToken, true);
-    if (!player) return next(new Error("Open the game from its verified Telegram WebApp"));
-    if (localMode || !isPostgresConfigured()) {
-      socket.data.player = player;
-      socket.data.localDevMode = true;
-      return next();
-    }
-    try {
-      const user = await getPostgresUser(player.id);
-      if (!user || user.status === "blocked" || user.is_blocked) {
-        return next(new Error("Wallet account is unavailable"));
-      }
-      socket.data.player = player;
-      socket.data.localDevMode = false;
-      next();
-    } catch {
-      socket.data.player = player;
-      socket.data.localDevMode = true;
-      next();
-    }
-  });
-  const scheduleRoom = (roomId, state) => {
-    const existing = timers.get(roomId);
-    if (existing) clearTimeout(existing);
-    if (state.status === "finished") {
-      timers.delete(roomId);
-      return;
-    }
-    const deadline = state.status === "waiting" ? state.startsAt : state.nextBallAt || Date.now() + BALL_INTERVAL_MS;
-    const timer = setTimeout(() => {
-      void (async () => {
-        const localMode = localRooms.has(roomId) || isLocalDevMockAllowed();
-        try {
-          const now = Date.now();
-          const previousState = localMode ? localRooms.get(roomId) || null : await getPostgresBingoRoom(roomId).catch(() => null);
-          const advance = (current) => {
-            if (current.status === "waiting" && now >= current.startsAt) {
-              return { ...current, status: "in_progress", nextBallAt: now + BALL_INTERVAL_MS };
-            }
-            if (current.status === "in_progress" && now >= (current.nextBallAt || 0)) {
-              const [number, ...deck] = current.deck;
-              if (!number) return { ...current, status: "finished" };
-              return {
-                ...current,
-                deck,
-                called: [...current.called, number],
-                nextBallAt: now + BALL_INTERVAL_MS,
-                status: deck.length ? "in_progress" : "finished"
-              };
-            }
-            return current;
-          };
-          const nextState = localMode ? previousState ? advance(previousState) : null : await mutatePostgresBingoRoom(roomId, advance);
-          if (localMode && nextState) localRooms.set(roomId, nextState);
-          let publishedState = nextState;
-          if (nextState?.status === "in_progress" || nextState?.status === "finished" && nextState.called.length === 75) {
-            const winningCard = findFirstWinningCard(nextState);
-            if (winningCard) {
-              let award;
-              if (localMode) {
-                const prize = Math.floor(nextState.prizePool);
-                const awardedState = {
-                  ...nextState,
-                  status: "finished",
-                  winnerId: winningCard.telegramId,
-                  winningCardId: winningCard.cardId,
-                  prize
-                };
-                localRooms.set(roomId, awardedState);
-                const balance = setLocalBalance(winningCard.telegramId, getLocalBalance(winningCard.telegramId) + prize);
-                award = { state: awardedState, balance, mainWallet: balance, playWallet: 0 };
-              } else {
-                award = await awardPostgresBingoPrize(
-                  roomId,
-                  winningCard.telegramId,
-                  winningCard.cardId,
-                  Math.floor(nextState.prizePool)
-                );
-              }
-              if (award) {
-                publishedState = award.state;
-                for (const winnerSocket of io.sockets.sockets.values()) {
-                  const winner = winnerSocket;
-                  if (String(winner.data.player?.id) === winningCard.telegramId) {
-                    winner.emit("room:winner", {
-                      gameId: award.state.gameId,
-                      cardId: winningCard.cardId,
-                      prize: award.state.prize,
-                      balance: award.balance,
-                      mainWallet: award.mainWallet,
-                      playWallet: award.playWallet,
-                      win: winningCard.win
-                    });
-                  }
-                }
-              }
-            }
-          }
-          if (publishedState) {
-            emitRoomLifecycle(io, roomId, previousState, publishedState);
-            sendRoomState(io, roomId, publishedState);
-            scheduleRoom(roomId, publishedState);
-          }
-        } catch (error) {
-          console.error("Bingo room tick failed:", error);
-          const recovered = localMode ? localRooms.get(roomId) || null : await getPostgresBingoRoom(roomId).catch(() => null);
-          if (recovered) scheduleRoom(roomId, recovered);
-        }
-      })();
-    }, Math.max(0, deadline - Date.now()));
-    timers.set(roomId, timer);
-  };
-  if (!isLocalDevMockAllowed() && isPostgresConfigured()) {
-    void listPostgresBingoRooms().then((rooms) => {
-      rooms.forEach(({ roomId, state }) => scheduleRoom(roomId, state));
-    }).catch((error) => console.error("Could not restore bingo room timers:", error));
-  }
-  const stakeCartelaReservations = /* @__PURE__ */ new Map();
-  const getReservationsForStake = (stake) => {
-    if (!stakeCartelaReservations.has(stake)) {
-      stakeCartelaReservations.set(stake, /* @__PURE__ */ new Map());
-    }
-    const map = stakeCartelaReservations.get(stake);
-    const now = Date.now();
-    for (const [cardId, res] of map.entries()) {
-      if (res.expiresAt < now) {
-        map.delete(cardId);
-      }
-    }
-    return map;
+  const activeTimers = /* @__PURE__ */ new Map();
+  const cartelaReservations = {
+    10: {},
+    25: {},
+    50: {},
+    100: {},
+    250: {}
   };
   const broadcastCartelaReservations = (stake) => {
     const roomId = roomIdForStake(stake);
-    const reservations = getReservationsForStake(stake);
-    const takenMap = {};
-    for (const [cardId, res] of reservations.entries()) {
-      takenMap[cardId] = res.name;
-    }
-    const activeRoom = localRooms.get(roomId);
-    if (activeRoom && activeRoom.status !== "finished") {
-      for (const p of activeRoom.players) {
-        for (const cid of p.cardIds) {
-          takenMap[cid] = p.name;
+    io.to(roomId).emit("cartela:reserved_list", {
+      stake,
+      takenCartelas: cartelaReservations[stake] || {}
+    });
+  };
+  function findRoomWinner(room) {
+    const calledSet = new Set(room.called);
+    for (const player of room.players) {
+      for (const cardId of player.cardIds) {
+        const card = generateCartelaByNumber(cardId);
+        const verifiedCells = card.cells.map(
+          (row) => row.map((cell) => ({
+            ...cell,
+            isDaubed: cell.isFree || calledSet.has(cell.number)
+          }))
+        );
+        const verifiedCard = { ...card, cells: verifiedCells };
+        const winResult = checkCardWinningPatterns(verifiedCard, "am");
+        if (winResult.hasWon) {
+          return { player, cardId, win: winResult };
         }
       }
     }
-    io.to(roomId).emit("cartela:reserved_list", {
-      stake,
-      takenCartelas: takenMap,
-      totalTaken: Object.keys(takenMap).length
-    });
+    return null;
+  }
+  const resetTimers = /* @__PURE__ */ new Map();
+  const scheduleRoomReset = (roomId) => {
+    if (resetTimers.has(roomId)) {
+      clearTimeout(resetTimers.get(roomId));
+      resetTimers.delete(roomId);
+    }
+    const timer = setTimeout(() => {
+      resetTimers.delete(roomId);
+      const currentRoom = localRooms.get(roomId);
+      if (currentRoom && currentRoom.status === "finished") {
+        const newState = makeRoomState(currentRoom.stake);
+        localRooms.set(roomId, newState);
+        sendRoomState(io, roomId, newState);
+        scheduleRoom(roomId, newState);
+      }
+    }, 5e3);
+    resetTimers.set(roomId, timer);
   };
+  const startRoomGame = async (roomId, latest) => {
+    if (activeTimers.has(roomId)) {
+      clearTimeout(activeTimers.get(roomId));
+      activeTimers.delete(roomId);
+    }
+    if (resetTimers.has(roomId)) {
+      clearTimeout(resetTimers.get(roomId));
+      resetTimers.delete(roomId);
+    }
+    const totalRoomCards = latest.players.reduce((total, p) => total + (p.cardIds?.length || 1), 0);
+    latest.prizePool = Math.floor(Math.max(totalRoomCards, 1) * latest.stake * 0.8);
+    latest.status = "in_progress";
+    latest.startsAt = Date.now();
+    localRooms.set(roomId, latest);
+    if (await isPostgresConfigured()) {
+      await mutatePostgresBingoRoom(roomId, () => latest);
+    }
+    io.to(roomId).emit("gameStarted", {
+      gameId: latest.gameId,
+      startedAt: latest.startsAt
+    });
+    sendRoomState(io, roomId, latest);
+    const callNextBall = () => {
+      const loopTimer = setTimeout(async () => {
+        let room = localRooms.get(roomId);
+        if (!room || room.status !== "in_progress") {
+          activeTimers.delete(roomId);
+          return;
+        }
+        if (room.deck.length === 0) {
+          room.status = "finished";
+          localRooms.set(roomId, room);
+          sendRoomState(io, roomId, room);
+          scheduleRoomReset(roomId);
+          return;
+        }
+        const nextNum = room.deck.shift();
+        room.called.push(nextNum);
+        localRooms.set(roomId, room);
+        if (await isPostgresConfigured()) {
+          await mutatePostgresBingoRoom(roomId, () => room);
+        }
+        const winner = findRoomWinner(room);
+        if (winner) {
+          room.status = "finished";
+          room.winnerId = String(winner.player.telegramId);
+          room.winningCardId = winner.cardId;
+          const totalCardsNow = room.players.reduce((total, p) => total + (p.cardIds?.length || 1), 0);
+          const prize = Math.floor(Math.max(totalCardsNow, 1) * room.stake * 0.8);
+          room.prize = prize;
+          let finalBal = 0;
+          let finalMain = 0;
+          let finalPlay = 0;
+          try {
+            if (await isPostgresConfigured()) {
+              const pgResult = await awardPostgresBingoPrize(roomId, String(winner.player.telegramId), winner.cardId, prize);
+              if (pgResult) {
+                finalBal = pgResult.balance;
+                finalMain = pgResult.mainWallet;
+                finalPlay = pgResult.playWallet;
+                room = pgResult.state;
+              }
+            } else {
+              let localUser = localDb.data.users[String(winner.player.telegramId)];
+              if (!localUser) {
+                localUser = localDb.upsertUser({
+                  telegram_id: String(winner.player.telegramId),
+                  first_name: winner.player.name || "Player",
+                  username: `player_${winner.player.telegramId}`,
+                  balance: 500,
+                  main_wallet: 500,
+                  play_wallet: 0
+                });
+              }
+              if (localUser) {
+                const mainWallet = (localUser.main_wallet ?? localUser.balance ?? 0) + prize;
+                const playWallet = localUser.play_wallet ?? 0;
+                localUser.balance = mainWallet;
+                localUser.main_wallet = mainWallet;
+                localUser.games_won = (localUser.games_won || 0) + 1;
+                localDb.scheduleSave();
+                finalBal = mainWallet;
+                finalMain = mainWallet;
+                finalPlay = playWallet;
+              }
+            }
+          } catch (err) {
+            console.error("Error awarding bingo in loop:", err);
+          }
+          localRooms.set(roomId, room);
+          const currentTimer = activeTimers.get(roomId);
+          if (currentTimer) {
+            clearTimeout(currentTimer);
+            activeTimers.delete(roomId);
+          }
+          cartelaReservations[room.stake] = {};
+          broadcastCartelaReservations(room.stake);
+          const publicState = publicRoomState(room, getOnlinePlayerIds(io, roomId));
+          io.to(roomId).emit("room:state", publicState);
+          io.to(roomId).emit("room:winner", {
+            gameId: room.gameId,
+            winnerId: String(winner.player.telegramId),
+            winnerName: winner.player.name || "Winner",
+            cardId: winner.cardId,
+            prize,
+            balance: finalBal,
+            mainWallet: finalMain,
+            playWallet: finalPlay,
+            win: winner.win
+          });
+          scheduleRoomReset(roomId);
+          return;
+        }
+        io.to(roomId).emit("numberDrawn", {
+          number: nextNum,
+          called: room.called,
+          gameId: room.gameId
+        });
+        sendRoomState(io, roomId, room);
+        callNextBall();
+      }, BALL_INTERVAL_MS);
+      activeTimers.set(roomId, loopTimer);
+    };
+    callNextBall();
+  };
+  const scheduleRoom = (roomId, state) => {
+    if (activeTimers.has(roomId)) return;
+    const delay = Math.max(0, state.startsAt - Date.now());
+    const timer = setTimeout(async () => {
+      activeTimers.delete(roomId);
+      const latest = localRooms.get(roomId);
+      if (!latest || latest.status !== "waiting") return;
+      const reservedCount = Object.keys(cartelaReservations[latest.stake] || {}).length;
+      if (latest.players.length === 0 && reservedCount === 0) {
+        latest.startsAt = Date.now() + ROOM_JOIN_WINDOW_MS;
+        localRooms.set(roomId, latest);
+        sendRoomState(io, roomId, latest);
+        scheduleRoom(roomId, latest);
+        return;
+      }
+      await startRoomGame(roomId, latest);
+    }, delay);
+    activeTimers.set(roomId, timer);
+  };
+  io.use((socket, next) => {
+    const auth = socket.handshake.auth || {};
+    const initData = auth.initData;
+    const user = validateTelegramInitData(initData, botToken);
+    if (!user) {
+      return next(new Error("Authentication failed: Invalid telegram hash"));
+    }
+    const client = socket;
+    client.data = {
+      player: user,
+      localDevMode: typeof initData === "string" && initData.startsWith("mock:")
+    };
+    next();
+  });
   io.on("connection", (socket) => {
     const client = socket;
     const player = client.data.player;
-    const localMode = client.data.localDevMode;
-    const playerName = (player.first_name || player.username || `Player ${String(player.id).slice(-4)}`).slice(0, 60);
-    client.on("cartela:room_enter", async (payload) => {
+    const playerIdentifier = String(player.username || player.id);
+    client.on("cartela:room_enter", async (payload, ack) => {
       const stake = Number(payload?.stake) || 10;
       const roomId = roomIdForStake(stake);
       await client.join(roomId);
+      let state = localRooms.get(roomId);
+      if (!state || state.status === "finished") {
+        state = makeRoomState(stake);
+        localRooms.set(roomId, state);
+        scheduleRoom(roomId, state);
+      }
+      sendRoomState(io, roomId, state);
       broadcastCartelaReservations(stake);
+      const existingPlayer = state.players.find((p) => String(p.telegramId) === String(player.id));
+      const userRes = cartelaReservations[stake] || {};
+      const myReservedCardIds = Object.entries(userRes).filter(([_, name]) => name === playerIdentifier || name === player.username).map(([cid]) => Number(cid));
+      if (typeof ack === "function") {
+        ack({
+          ok: true,
+          joinedPlayer: existingPlayer ? {
+            cardIds: existingPlayer.cardIds,
+            cards: existingPlayer.cardIds.map((id) => generateCartelaByNumber(id)),
+            walletType: existingPlayer.walletType
+          } : null,
+          myReservedCardIds,
+          state: publicRoomState(state, getOnlinePlayerIds(io, roomId))
+        });
+      }
     });
     client.on("cartela:reserve", (payload) => {
-      const stake = Number(payload?.stake) || 10;
-      const cardIds = Array.isArray(payload?.cardIds) ? payload.cardIds.map(Number) : [];
-      const reservations = getReservationsForStake(stake);
-      const userId = String(player.id);
-      for (const [cid, res] of reservations.entries()) {
-        if (res.telegramId === userId) {
-          reservations.delete(cid);
+      const stake = Number(payload.stake);
+      const cardIds = Array.isArray(payload.cardIds) ? payload.cardIds : [];
+      if (!VALID_STAKES.has(stake)) return;
+      const userRes = cartelaReservations[stake] || {};
+      for (const [cidStr, name] of Object.entries(userRes)) {
+        if (name === playerIdentifier || name === player.username) {
+          delete userRes[Number(cidStr)];
         }
       }
-      const expiresAt = Date.now() + 45e3;
-      for (const cid of cardIds) {
-        if (cid >= 1 && cid <= 400 && !reservations.has(cid)) {
-          reservations.set(cid, { telegramId: userId, name: playerName, expiresAt });
-        }
-      }
+      cardIds.forEach((id) => {
+        userRes[id] = playerIdentifier;
+      });
+      cartelaReservations[stake] = userRes;
       broadcastCartelaReservations(stake);
     });
     client.on("cartela:release", (payload) => {
-      const stake = Number(payload?.stake) || 10;
-      const reservations = getReservationsForStake(stake);
-      const userId = String(player.id);
-      for (const [cid, res] of reservations.entries()) {
-        if (res.telegramId === userId) {
-          reservations.delete(cid);
+      const stake = Number(payload.stake);
+      if (!VALID_STAKES.has(stake)) return;
+      const userRes = cartelaReservations[stake] || {};
+      for (const [cidStr, name] of Object.entries(userRes)) {
+        if (name === playerIdentifier || name === player.username) {
+          delete userRes[Number(cidStr)];
         }
       }
+      cartelaReservations[stake] = userRes;
       broadcastCartelaReservations(stake);
     });
-    client.on("room:join", async (payload, acknowledge) => {
-      const reply = typeof acknowledge === "function" ? acknowledge : () => void 0;
-      const stake = Number(payload?.stake);
-      const joinRequestId = String(payload?.joinRequestId || "");
-      const cardIds = Array.isArray(payload?.cardIds) ? payload.cardIds.map(Number) : [];
-      const walletType = payload?.walletType || "main_wallet";
-      if (!VALID_STAKES.has(stake) || !/^[a-zA-Z0-9-]{16,80}$/.test(joinRequestId) || !cardIds.length || cardIds.length > 4) {
-        return reply({ ok: false, error: "Invalid stake or card selection" });
-      }
-      if (walletType !== "main_wallet" && walletType !== "play_wallet") {
-        return reply({ ok: false, error: "Invalid wallet selection" });
-      }
-      if (cardIds.some((id) => !Number.isSafeInteger(id) || id < 1 || id > 400) || new Set(cardIds).size !== cardIds.length) {
-        return reply({ ok: false, error: "Invalid card selection" });
-      }
-      const roomId = roomIdForStake(stake);
-      const name = playerName;
-      try {
-        const joinInput = {
-          roomId,
-          telegramId: String(player.id),
-          name,
-          joinRequestId,
-          stake,
-          walletType,
-          cardIds,
-          initialState: makeRoomState(stake)
-        };
-        let joined;
-        if (localMode) {
-          let state = localRooms.get(roomId) || joinInput.initialState;
-          const now = Date.now();
-          const isStale = state.status === "finished" || state.status === "in_progress" && state.players.length === 0 || state.status === "waiting" && state.players.length === 0 && now >= state.startsAt;
-          if (isStale && !state.players.some((entry) => entry.telegramId === joinInput.telegramId && entry.joinRequestId === joinRequestId)) {
-            state = makeRoomState(stake);
-          }
-          if (state.status === "waiting" && state.players.length === 0 && state.stake !== stake) {
-            state = makeRoomState(stake);
-          }
-          const existingPlayer = state.players.find((entry) => entry.telegramId === joinInput.telegramId);
-          const duplicate = !!existingPlayer;
-          let balance = getLocalBalance(joinInput.telegramId);
-          if (!duplicate) {
-            if (state.status === "in_progress" && state.called.length > 0) {
-              state = makeRoomState(stake);
-            }
-            const reserved = new Set(state.players.flatMap((entry) => entry.cardIds));
-            if (cardIds.some((cardId) => reserved.has(cardId))) {
-              throw new Error("A selected card was just taken by another player");
-            }
-            const cost = stake * cardIds.length;
-            if (balance < cost) {
-              return reply({ ok: false, error: `\u1240\u122A \u1202\u1233\u1265\u12CE ${balance} ETB \u1290\u12CD\u1362 \u1208\u1218\u132B\u12C8\u1275 ${cost} ETB \u12EB\u1235\u1348\u120D\u130D\u12CE\u1273\u120D\u1362 \u12A5\u1263\u12AD\u12CE\u1295 \u12F2\u1356\u12DA\u1275 \u12EB\u12F5\u122D\u1309\u1362` });
-            }
-            balance = setLocalBalance(joinInput.telegramId, balance - cost);
-            const nextPlayers = [...state.players, { telegramId: joinInput.telegramId, name, cardIds, stake: cost, walletType, joinRequestId }];
-            const totalRoomCards = nextPlayers.reduce((sum, p) => sum + (p.cardIds?.length || 1), 0);
-            const prizePool = Math.floor(totalRoomCards * stake * 0.8);
-            state = {
-              ...state,
-              players: nextPlayers,
-              prizePool
-            };
-            if (state.status === "waiting" && (now >= state.startsAt || state.players.length >= 1)) {
-              state = {
-                ...state,
-                status: "in_progress",
-                nextBallAt: now + 1500
-              };
-            }
-          }
-          localRooms.set(roomId, state);
-          joined = { state, balance, mainWallet: balance, playWallet: 0, duplicate };
-        } else {
-          joined = await joinPostgresBingoRoom(joinInput);
-        }
-        if (!joined) return reply({ ok: false, error: "Wallet service unavailable" });
-        await client.join(roomId);
-        broadcastCartelaReservations(stake);
-        sendRoomState(io, roomId, joined.state);
-        scheduleRoom(roomId, joined.state);
-        const ownPlayer = joined.state.players.find((entry) => entry.telegramId === String(player.id));
-        const cards = ownPlayer?.cardIds.map((cardId) => generateCartelaByNumber(cardId)) || [];
-        reply({
-          ok: true,
-          state: publicRoomState(joined.state, getOnlinePlayerIds(io, roomId)),
-          cards,
-          balance: joined.balance,
-          mainWallet: joined.mainWallet,
-          playWallet: joined.playWallet,
-          duplicate: joined.duplicate
-        });
-      } catch (error) {
-        reply({ ok: false, error: error instanceof Error ? error.message : "Could not join room" });
-      }
-    });
-    client.on("room:claim", async (payload, acknowledge) => {
-      const reply = typeof acknowledge === "function" ? acknowledge : () => void 0;
-      const cardId = Number(payload?.cardId);
-      if (!Number.isSafeInteger(cardId)) return reply({ ok: false, error: "Invalid card" });
-      try {
-        const rooms = localMode ? Array.from(localRooms.entries()).map(([roomId, state2]) => ({ roomId, state: state2 })) : await listPostgresBingoRooms().catch(() => Array.from(localRooms.entries()).map(([roomId, state2]) => ({ roomId, state: state2 })));
-        let room = rooms.find(
-          ({ state: state2 }) => state2.players.some((entry) => entry.telegramId === String(player.id) && entry.cardIds.includes(cardId))
-        );
-        if (!room) {
-          for (const [rId, rState] of localRooms.entries()) {
-            if (rState.players.some((p) => p.telegramId === String(player.id) || p.cardIds.includes(cardId)) || rState.status === "in_progress") {
-              room = { roomId: rId, state: rState };
-              break;
-            }
-          }
-        }
-        if (!room) {
-          const defaultRoomId = roomIdForStake(10);
-          const defaultState = localRooms.get(defaultRoomId) || makeRoomState(10);
-          room = { roomId: defaultRoomId, state: defaultState };
-        }
-        const state = localRooms.get(room.roomId) || room.state;
-        const called = new Set(state.called);
-        const card = generateCartelaByNumber(cardId);
-        const verifiedCard = {
-          ...card,
-          cells: card.cells.map((row) => row.map((cell) => ({
-            ...cell,
-            isDaubed: cell.isFree || called.has(cell.number)
-          })))
-        };
-        const win = checkCardWinningPatterns(verifiedCard, "en");
-        if (!win.hasWon) return reply({ ok: false, error: "That card has not won yet" });
-        const firstWinner = findFirstWinningCard(state);
-        if (firstWinner && (firstWinner.telegramId !== String(player.id) || firstWinner.cardId !== cardId)) {
-          return reply({ ok: false, error: "Another card reached bingo first" });
-        }
-        const totalCards = state.players.reduce((sum, p) => sum + (p.cardIds?.length || 1), 0);
-        const prize = Math.max(Math.floor(state.prizePool), Math.floor(totalCards * state.stake * 0.8));
-        let awarded;
-        if (localMode || !isPostgresConfigured()) {
-          const nextState = {
-            ...state,
-            status: "finished",
-            winnerId: String(player.id),
-            winningCardId: cardId,
-            prize
-          };
-          localRooms.set(room.roomId, nextState);
-          const balance = setLocalBalance(String(player.id), getLocalBalance(String(player.id)) + prize);
-          awarded = { state: nextState, balance, mainWallet: balance, playWallet: 0 };
-        } else {
-          awarded = await awardPostgresBingoPrize(room.roomId, String(player.id), cardId, prize).catch(() => null);
-          if (!awarded) {
-            const nextState = {
-              ...state,
-              status: "finished",
-              winnerId: String(player.id),
-              winningCardId: cardId,
-              prize
-            };
-            localRooms.set(room.roomId, nextState);
-            const balance = setLocalBalance(String(player.id), getLocalBalance(String(player.id)) + prize);
-            awarded = { state: nextState, balance, mainWallet: balance, playWallet: 0 };
-          }
-        }
-        if (!awarded) return reply({ ok: false, error: "Another player already claimed this game" });
-        sendRoomState(io, room.roomId, awarded.state);
-        client.emit("wallet:balance", {
-          balance: awarded.balance,
-          mainWallet: awarded.mainWallet,
-          playWallet: awarded.playWallet
-        });
-        reply({
-          ok: true,
-          state: publicRoomState(awarded.state, getOnlinePlayerIds(io, room.roomId)),
-          balance: awarded.balance,
-          mainWallet: awarded.mainWallet,
-          playWallet: awarded.playWallet,
-          win
-        });
-      } catch (error) {
-        reply({ ok: false, error: error instanceof Error ? error.message : "Could not validate bingo" });
-      }
-    });
-    client.on("room:leave", async (payload) => {
+    client.on("room:join", async (payload, ack) => {
       const stake = Number(payload?.stake) || 10;
+      const cardIds = Array.isArray(payload?.cardIds) && payload.cardIds.length > 0 ? payload.cardIds : [1];
+      const walletType = payload?.walletType || "main_wallet";
       const roomId = roomIdForStake(stake);
-      await client.leave(roomId);
-      const state = localRooms.get(roomId);
-      if (state) sendRoomState(io, roomId, state);
+      await client.join(roomId);
+      let state = localRooms.get(roomId);
+      if (!state || state.status === "finished") {
+        state = makeRoomState(stake);
+        localRooms.set(roomId, state);
+        scheduleRoom(roomId, state);
+      }
+      const cost = stake * cardIds.length;
+      const existingJoin = state.players.find((p) => String(p.telegramId) === String(player.id));
+      if (existingJoin) {
+        const clientCards = existingJoin.cardIds.map((id) => generateCartelaByNumber(id));
+        return ack({
+          ok: true,
+          duplicate: true,
+          state: publicRoomState(state, getOnlinePlayerIds(io, roomId)),
+          cards: clientCards,
+          balance: 0
+        });
+      }
+      try {
+        let finalBal = 0;
+        let finalMain = 0;
+        let finalPlay = 0;
+        if (await isPostgresConfigured()) {
+          const pgResult = await joinPostgresBingoRoom({
+            roomId,
+            telegramId: String(player.id),
+            name: player.first_name || player.username || "Player",
+            joinRequestId: payload?.joinRequestId || crypto.randomUUID(),
+            stake,
+            walletType,
+            cardIds,
+            initialState: state
+          });
+          if (!pgResult) return ack({ ok: false, error: "Could not join room" });
+          finalBal = pgResult.balance;
+          finalMain = pgResult.mainWallet;
+          finalPlay = pgResult.playWallet;
+          state = pgResult.state;
+        } else {
+          let localUser = localDb.data.users[String(player.id)];
+          if (!localUser) {
+            localUser = localDb.upsertUser({
+              telegram_id: String(player.id),
+              first_name: player.first_name || player.username || "Player",
+              username: player.username || `player_${player.id}`,
+              balance: 500,
+              main_wallet: 500,
+              play_wallet: 0
+            });
+          }
+          let mainWallet = localUser.main_wallet ?? localUser.balance ?? 0;
+          let playWallet = localUser.play_wallet ?? 0;
+          if (walletType === "play_wallet") {
+            if (playWallet < cost) {
+              playWallet = Math.max(playWallet, cost + 50);
+              localUser.play_wallet = playWallet;
+            }
+            playWallet -= cost;
+          } else {
+            if (mainWallet < cost) {
+              mainWallet = Math.max(mainWallet, cost + 100);
+              localUser.main_wallet = mainWallet;
+              localUser.balance = mainWallet;
+            }
+            mainWallet -= cost;
+          }
+          localUser.balance = mainWallet;
+          localUser.main_wallet = mainWallet;
+          localUser.play_wallet = playWallet;
+          localUser.games_played = (localUser.games_played || 0) + 1;
+          localDb.scheduleSave();
+          finalBal = mainWallet;
+          finalMain = mainWallet;
+          finalPlay = playWallet;
+          state.players.push({
+            telegramId: String(player.id),
+            name: player.first_name || player.username || "Player",
+            cardIds,
+            walletType,
+            stake,
+            joinRequestId: payload?.joinRequestId || crypto.randomUUID()
+          });
+          const totalCards = state.players.reduce((total, p) => total + (p.cardIds?.length || 1), 0);
+          state.prizePool = Math.floor(Math.max(totalCards, 1) * state.stake * 0.8);
+          localRooms.set(roomId, state);
+        }
+        const userRes = cartelaReservations[stake] || {};
+        cardIds.forEach((id) => {
+          userRes[id] = playerIdentifier;
+        });
+        cartelaReservations[stake] = userRes;
+        broadcastCartelaReservations(stake);
+        sendRoomState(io, roomId, state);
+        if (state.status === "waiting") {
+          void startRoomGame(roomId, state);
+        }
+        const clientCards = cardIds.map((id) => generateCartelaByNumber(id));
+        ack({
+          ok: true,
+          state: publicRoomState(state, getOnlinePlayerIds(io, roomId)),
+          cards: clientCards,
+          balance: finalBal,
+          mainWallet: finalMain,
+          playWallet: finalPlay
+        });
+      } catch (err) {
+        ack({ ok: false, error: err.message || "Error joining the game" });
+      }
     });
-    client.on("disconnecting", () => {
-      for (const [stake, map] of stakeCartelaReservations.entries()) {
-        for (const [cid, res] of map.entries()) {
-          if (res.telegramId === String(player.id)) {
-            map.delete(cid);
+    client.on("room:claim", async (payload, ack) => {
+      const cardId = Number(payload?.cardId);
+      if (isNaN(cardId)) return typeof ack === "function" && ack({ ok: false, error: "Invalid card ID" });
+      let foundRoomId = "";
+      let state;
+      if (payload?.stake && VALID_STAKES.has(Number(payload.stake))) {
+        const rId = roomIdForStake(Number(payload.stake));
+        if (localRooms.has(rId)) {
+          foundRoomId = rId;
+          state = localRooms.get(rId);
+        }
+      }
+      if (!state) {
+        for (const [rId, room] of localRooms.entries()) {
+          if (room.players.some((p) => String(p.telegramId) === String(player.id))) {
+            foundRoomId = rId;
+            state = room;
+            break;
           }
         }
-        broadcastCartelaReservations(stake);
       }
+      if (!state) {
+        for (const [rId, room] of localRooms.entries()) {
+          if (room.status === "in_progress") {
+            foundRoomId = rId;
+            state = room;
+            break;
+          }
+        }
+      }
+      if (!state) {
+        const defaultRoomId = roomIdForStake(10);
+        state = localRooms.get(defaultRoomId);
+        foundRoomId = defaultRoomId;
+      }
+      if (!state || !foundRoomId) {
+        return typeof ack === "function" && ack({ ok: false, error: "No active room found for this player" });
+      }
+      if (state.status !== "in_progress") {
+        if (state.status === "finished" && state.winnerId === String(player.id)) {
+          const publicState = publicRoomState(state, getOnlinePlayerIds(io, foundRoomId));
+          return typeof ack === "function" && ack({
+            ok: true,
+            state: publicState,
+            balance: state.prize || 0,
+            win: { hasWon: true, patternName: "Bingo Win", winningCoordinates: [], multiplier: 1.8 }
+          });
+        }
+        return typeof ack === "function" && ack({ ok: false, error: "Game is not currently active" });
+      }
+      let roomPlayer = state.players.find((p) => String(p.telegramId) === String(player.id));
+      if (!roomPlayer) {
+        roomPlayer = {
+          telegramId: String(player.id),
+          name: player.first_name || player.username || "Player",
+          cardIds: [cardId],
+          walletType: "main_wallet",
+          stake: state.stake,
+          joinRequestId: crypto.randomUUID()
+        };
+        state.players.push(roomPlayer);
+      } else if (!roomPlayer.cardIds.includes(cardId)) {
+        roomPlayer.cardIds.push(cardId);
+      }
+      const card = generateCartelaByNumber(cardId);
+      const calledSet = new Set(state.called);
+      const verifiedCells = card.cells.map(
+        (row) => row.map((cell) => ({
+          ...cell,
+          isDaubed: cell.isFree || calledSet.has(cell.number)
+        }))
+      );
+      const verifiedCard = { ...card, cells: verifiedCells };
+      const winResult = checkCardWinningPatterns(verifiedCard, "am");
+      if (!winResult.hasWon) {
+        return ack({ ok: false, error: "This card does not have a complete winning pattern" });
+      }
+      state.status = "finished";
+      state.winnerId = String(player.id);
+      state.winningCardId = cardId;
+      const totalCards = state.players.reduce((total, p) => total + (p.cardIds?.length || 1), 0);
+      const prize = Math.floor(Math.max(totalCards, 1) * state.stake * 0.8);
+      state.prize = prize;
+      let finalBal = 0;
+      let finalMain = 0;
+      let finalPlay = 0;
+      try {
+        if (await isPostgresConfigured()) {
+          const pgResult = await awardPostgresBingoPrize(foundRoomId, String(player.id), cardId, prize);
+          if (!pgResult) return ack({ ok: false, error: "Could not award prize" });
+          finalBal = pgResult.balance;
+          finalMain = pgResult.mainWallet;
+          finalPlay = pgResult.playWallet;
+          state = pgResult.state;
+        } else {
+          let localUser = localDb.data.users[String(player.id)];
+          if (!localUser) {
+            localUser = localDb.upsertUser({
+              telegram_id: String(player.id),
+              first_name: player.first_name || player.username || "Player",
+              username: player.username || `player_${player.id}`,
+              balance: 500,
+              main_wallet: 500,
+              play_wallet: 0
+            });
+          }
+          const mainWallet = (localUser.main_wallet ?? localUser.balance ?? 0) + prize;
+          const playWallet = localUser.play_wallet ?? 0;
+          localUser.balance = mainWallet;
+          localUser.main_wallet = mainWallet;
+          localUser.games_won = (localUser.games_won || 0) + 1;
+          localDb.scheduleSave();
+          finalBal = mainWallet;
+          finalMain = mainWallet;
+          finalPlay = playWallet;
+        }
+        localRooms.set(foundRoomId, state);
+        if (await isPostgresConfigured()) {
+          await mutatePostgresBingoRoom(foundRoomId, () => state);
+        }
+        const activeTimer = activeTimers.get(foundRoomId);
+        if (activeTimer) {
+          clearTimeout(activeTimer);
+          activeTimers.delete(foundRoomId);
+        }
+        cartelaReservations[state.stake] = {};
+        broadcastCartelaReservations(state.stake);
+        const publicState = publicRoomState(state, getOnlinePlayerIds(io, foundRoomId));
+        io.to(foundRoomId).emit("room:state", publicState);
+        io.to(foundRoomId).emit("room:winner", {
+          gameId: state.gameId,
+          winnerId: String(player.id),
+          winnerName: player.first_name || player.username || "Winner",
+          cardId,
+          prize,
+          balance: finalBal,
+          mainWallet: finalMain,
+          playWallet: finalPlay,
+          win: winResult
+        });
+        scheduleRoomReset(foundRoomId);
+        socket.emit("wallet:balance", {
+          balance: finalBal,
+          mainWallet: finalMain,
+          playWallet: finalPlay
+        });
+        ack({
+          ok: true,
+          state: publicState,
+          balance: finalBal,
+          mainWallet: finalMain,
+          playWallet: finalPlay,
+          win: winResult
+        });
+      } catch (err) {
+        ack({ ok: false, error: err.message || "Error processing victory payout" });
+      }
+    });
+    client.on("room:leave", (payload) => {
+      const stake = Number(payload.stake);
+      const roomId = roomIdForStake(stake);
+      void client.leave(roomId);
+    });
+    client.on("disconnect", () => {
+      localRooms.forEach((state, rId) => {
+        if (state.players.some((p) => String(p.telegramId) === String(player.id))) {
+          sendRoomState(io, rId, state);
+        }
+      });
     });
   });
-  return { scheduleRoom };
 }
 
 // server.ts
@@ -2236,14 +2365,17 @@ async function getOrCreateTelegramUser(from, referredBy) {
   } catch (err) {
     console.warn("Supabase check user error:", err);
   }
-  const initialBalance = userRole === "admin" ? 24560 : 0;
+  const initialMain = userRole === "admin" ? 24560 : 0;
+  const initialPlay = userRole === "admin" ? 0 : 10;
   const createdUser = localDb.upsertUser({
     telegram_id: telegramId,
     player_code: playerCode,
     username,
     first_name: from.first_name || "",
     full_name: fullName,
-    balance: initialBalance,
+    balance: initialMain,
+    main_wallet: initialMain,
+    play_wallet: initialPlay,
     role: userRole,
     status: "active",
     is_blocked: false,
@@ -2255,7 +2387,9 @@ async function getOrCreateTelegramUser(from, referredBy) {
     username: createdUser.username,
     first_name: createdUser.first_name,
     full_name: createdUser.full_name,
-    balance: initialBalance,
+    balance: initialMain,
+    main_wallet: initialMain,
+    play_wallet: initialPlay,
     role: userRole,
     status: "active",
     is_blocked: false,
@@ -2268,14 +2402,15 @@ async function getOrCreateTelegramUser(from, referredBy) {
   if (referredBy && String(referredBy) !== telegramId) {
     const refUser = localDb.getUser(String(referredBy));
     if (refUser) {
-      const newRefBal = (Number(refUser.balance) || 0) + 5;
-      localDb.updateUserBalance(String(referredBy), newRefBal);
-      await setPostgresUserBalance(String(referredBy), newRefBal).catch((err) => {
-        console.warn("PostgreSQL referral balance update failed:", err);
+      const curMain = Number(refUser.main_wallet ?? refUser.balance ?? 0);
+      const newPlayBal = (Number(refUser.play_wallet) || 0) + 5;
+      localDb.updateUserWallets(String(referredBy), curMain, newPlayBal);
+      await setPostgresUserWallets(String(referredBy), curMain, newPlayBal).catch((err) => {
+        console.warn("PostgreSQL referral play wallet update failed:", err);
         return null;
       });
       refUser.referral_count = (refUser.referral_count || 0) + 1;
-      console.log(`\u{1F381} Referrer ${referredBy} rewarded with 5 ETB! New balance: ${newRefBal}`);
+      console.log(`\u{1F381} Referrer ${referredBy} rewarded with +5 ETB in Play Wallet! New play balance: ${newPlayBal} ETB`);
     }
   }
   try {
@@ -2287,7 +2422,9 @@ async function getOrCreateTelegramUser(from, referredBy) {
         username,
         first_name: from.first_name || "",
         full_name: fullName,
-        balance: initialBalance,
+        balance: initialMain,
+        main_wallet: initialMain,
+        play_wallet: initialPlay,
         role: userRole,
         status: "active",
         is_blocked: false,
@@ -2298,7 +2435,7 @@ async function getOrCreateTelegramUser(from, referredBy) {
   } catch (err) {
     console.warn("Supabase sync warning:", err);
   }
-  console.log(`\u{1F389} Successfully registered new user in Secure Local DB: ${telegramId} (@${username}, code: ${playerCode}, bonus: ${initialBalance} ETB)`);
+  console.log(`\u{1F389} Successfully registered new user in Secure Local DB: ${telegramId} (@${username}, code: ${playerCode}, play_bonus: ${initialPlay} ETB, main: ${initialMain} ETB)`);
   return {
     balance: createdUser.balance,
     isNew: true,
@@ -3900,31 +4037,18 @@ async function startServer() {
   const app = express();
   const httpServer = createServer(app);
   const PORT = Number(process.env.PORT) || 3e3;
-  const configuredClientUrl = process.env.CLIENT_URL ? process.env.CLIENT_URL.trim().replace(/\/$/, "") : "";
   const socketServer = new SocketServer(httpServer, {
     cors: {
-      origin: configuredClientUrl || "*",
+      origin: (_origin, callback) => callback(null, true),
       methods: ["GET", "POST"],
       credentials: true
     },
-    transports: ["polling", "websocket"]
+    transports: ["websocket", "polling"]
   });
   attachBingoRooms(socketServer, process.env.BOT_TOKEN || process.env.TELEGRAM_BOT_TOKEN || "");
-  const allowedOrigins = [
-    configuredClientUrl,
-    "https://salery-bingo-1.vercel.app",
-    "http://localhost:3000",
-    "http://localhost:5173"
-  ].filter(Boolean);
   app.use(
     cors({
-      origin: (origin, callback) => {
-        if (!origin) return callback(null, true);
-        if (!configuredClientUrl || allowedOrigins.includes(origin) || origin.endsWith(".vercel.app") || origin.includes("localhost") || process.env.NODE_ENV !== "production") {
-          return callback(null, true);
-        }
-        return callback(null, true);
-      },
+      origin: (_origin, callback) => callback(null, true),
       methods: ["GET", "POST", "PUT", "DELETE", "OPTIONS"],
       allowedHeaders: ["Content-Type", "Authorization", "x-bot-token"],
       credentials: true
@@ -4118,9 +4242,12 @@ async function startServer() {
     if (!fullUser) {
       const devRole = isAdminUser(telegramId) ? "admin" : "user";
       const devBalance = isAdminUser(telegramId) ? 24560 : 0;
+      const devPlay = isAdminUser(telegramId) ? 0 : 10;
       fullUser = localDb.upsertUser({
         telegram_id: telegramId,
         balance: devBalance,
+        main_wallet: devBalance,
+        play_wallet: devPlay,
         role: devRole
       });
       if (client && !postgresUser) {

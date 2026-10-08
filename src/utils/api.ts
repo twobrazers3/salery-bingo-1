@@ -72,17 +72,22 @@ export function isStaticFrontendUrl(url: string): boolean {
 }
 
 export function getAutoDiscoveredRailwayUrl(): string {
-  if (typeof window === 'undefined') return 'https://yeya-bingo-production.up.railway.app';
-  const hostname = window.location.hostname;
-  if (hostname.endsWith('.vercel.app')) {
-    const prefix = hostname.replace('.vercel.app', '');
-    return `https://${prefix}-production.up.railway.app`;
+  if (typeof window !== 'undefined') {
+    const envBackend = (import.meta as any).env?.VITE_SERVER_URL || (import.meta as any).env?.VITE_BACKEND_URL;
+    if (envBackend && typeof envBackend === 'string' && envBackend.startsWith('http')) {
+      return envBackend.replace(/\/$/, '');
+    }
+    const hostname = window.location.hostname;
+    if (hostname.endsWith('.vercel.app')) {
+      const prefix = hostname.replace('.vercel.app', '');
+      return `https://${prefix}-production.up.railway.app`;
+    }
+    if (hostname.endsWith('.netlify.app')) {
+      const prefix = hostname.replace('.netlify.app', '');
+      return `https://${prefix}-production.up.railway.app`;
+    }
   }
-  if (hostname.endsWith('.netlify.app')) {
-    const prefix = hostname.replace('.netlify.app', '');
-    return `https://${prefix}-production.up.railway.app`;
-  }
-  return 'https://yeya-bingo-production.up.railway.app';
+  return 'https://salery-bingo-1-production.up.railway.app';
 }
 
 /**

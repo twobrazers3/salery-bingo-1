@@ -1006,7 +1006,9 @@ export default function App() {
       socket.on('room:winner', (result: any) => {
         handleProcessWinner(result);
       });
-      socket.on('connect_error', (error) => showToast(error.message));
+      socket.on('connect_error', (error) => {
+        console.warn('Socket connection retry:', error.message);
+      });
       gameSocketRef.current = socket;
       setSocketInstance(socket);
     }

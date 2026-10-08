@@ -5,8 +5,8 @@
   "type": "module",
   "scripts": {
     "dev": "tsx server.ts",
-    "build": "vite build",
-    "build:server": "npx esbuild server.ts --bundle --platform=node --format=esm --packages=external --outfile=server/index.js",
+    "build": "vite build && npx esbuild server.ts --bundle --platform=node --format=esm --packages=external --outfile=server.js && cp server.js server/index.js 2>/dev/null || true",
+    "build:server": "npx esbuild server.ts --bundle --platform=node --format=esm --packages=external --outfile=server/index.js && cp server/index.js server.js 2>/dev/null || true",
     "start": "node server.js",
     "preview": "vite preview",
     "clean": "rm -rf dist server.js",
