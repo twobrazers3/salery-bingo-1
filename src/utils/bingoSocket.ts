@@ -60,9 +60,17 @@ function getSocketBackendUrl() {
       localStorage.getItem('salery_bingo_backend_url') ||
       '';
 
-    if (explicitUrl.startsWith('http')) {
+    if (explicitUrl.startsWith('http') && !explicitUrl.includes('ais-dev-') && !explicitUrl.includes('ais-pre-')) {
       return explicitUrl.replace(/\/$/, '');
     }
+
+    // Clean up any stale local storage value
+    try {
+      const stored = localStorage.getItem('salery_bingo_backend_url');
+      if (stored && (stored.includes('ais-dev-') || stored.includes('ais-pre-'))) {
+        localStorage.removeItem('salery_bingo_backend_url');
+      }
+    } catch {}
 
     if (isStaticFrontendUrl(window.location.origin)) {
       return PRIMARY_LIVE_BACKEND;

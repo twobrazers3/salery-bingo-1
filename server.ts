@@ -3998,12 +3998,17 @@ async function startServer() {
     next();
   });
 
-  // Vite middleware for development vs Production static serving
-  if (process.env.NODE_ENV !== 'production' && !process.env.RAILWAY_ENVIRONMENT) {
+  // Health check routes for Railway / Cloud deployment
+  app.get('/health', (_req, res) => res.status(200).json({ status: 'ok', service: 'Salery Bingo' }));
+  app.get('/api/health', (_req, res) => res.status(200).json({ status: 'ok', service: 'Salery Bingo' }));
+
+  // Only mount Vite dev middleware when running locally in development without cloud port
+  const isLocalDev = process.env.NODE_ENV === 'development' && !process.env.PORT && !process.env.RAILWAY_ENVIRONMENT_NAME;
+  if (isLocalDev) {
     try {
       const { createServer: createViteServer } = await import('vite');
       const vite = await createViteServer({
-        server: { middlewareMode: true },
+        server: { middlewareMode: true, hmr: false },
         appType: 'spa',
       });
       app.use(vite.middlewares);
