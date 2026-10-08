@@ -131,7 +131,7 @@ export function getCandidateBackendUrls(): string[] {
     try {
       const params = new URLSearchParams(window.location.search);
       const paramBackend = params.get('backend');
-      if (paramBackend && paramBackend.startsWith('http')) {
+      if (paramBackend && paramBackend.startsWith('http') && !paramBackend.includes('ais-dev-') && !paramBackend.includes('ais-pre-')) {
         const cleanParam = paramBackend.replace(/\/$/, '');
         if (!candidates.includes(cleanParam)) {
           candidates.push(cleanParam);
@@ -143,7 +143,7 @@ export function getCandidateBackendUrls(): string[] {
       try {
         const hashParams = new URLSearchParams(window.location.hash.slice(1));
         const hb = hashParams.get('backend');
-        if (hb && hb.startsWith('http')) {
+        if (hb && hb.startsWith('http') && !hb.includes('ais-dev-') && !hb.includes('ais-pre-')) {
           const cleanHb = hb.replace(/\/$/, '');
           if (!candidates.includes(cleanHb)) {
             candidates.push(cleanHb);
@@ -154,7 +154,9 @@ export function getCandidateBackendUrls(): string[] {
 
     try {
       const saved = localStorage.getItem('salery_bingo_backend_url');
-      if (saved && saved.startsWith('http') && !isStaticFrontendUrl(saved)) {
+      if (saved && (saved.includes('ais-dev-') || saved.includes('ais-pre-'))) {
+        localStorage.removeItem('salery_bingo_backend_url');
+      } else if (saved && saved.startsWith('http') && !isStaticFrontendUrl(saved)) {
         const cleanSaved = saved.replace(/\/$/, '');
         if (!candidates.includes(cleanSaved)) {
           candidates.push(cleanSaved);
