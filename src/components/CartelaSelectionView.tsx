@@ -49,6 +49,14 @@ export const CartelaSelectionView: React.FC<CartelaSelectionViewProps> = ({
     return Math.max(0, Math.ceil((targetTs - Date.now()) / 1000));
   }, []);
 
+  // Sync with roomStartsAt whenever the parent passes an updated timestamp
+  useEffect(() => {
+    if (typeof roomStartsAt === 'number' && roomStartsAt > Date.now()) {
+      setServerStartsAt(roomStartsAt);
+      setTimeLeft(computeRemaining(roomStartsAt));
+    }
+  }, [roomStartsAt, computeRemaining]);
+
   // Countdown timer derived from server room timestamp
   const [timeLeft, setTimeLeft] = useState<number>(() => computeRemaining(serverStartsAt));
   const [isStarting, setIsStarting] = useState<boolean>(false);
@@ -345,7 +353,12 @@ export const CartelaSelectionView: React.FC<CartelaSelectionViewProps> = ({
   const handleRefresh = () => {
     sounds.playBeep(false);
     if (socket) {
-      socket.emit('cartela:room_enter', { stake: settings.selectedStake });
+      socket.emit('cartela:room_enter', { stake: settings.selectedStake }, (res: any) => {
+        if (res && res.ok && res.state && typeof res.state.startsAt === 'number') {
+          setServerStartsAt(res.state.startsAt);
+          setTimeLeft(computeRemaining(res.state.startsAt));
+        }
+      });
     } else {
       const map = new Map<number, string>();
       const count = 10 + Math.floor(Math.random() * 12);
