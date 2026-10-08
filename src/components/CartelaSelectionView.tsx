@@ -128,23 +128,28 @@ export const CartelaSelectionView: React.FC<CartelaSelectionViewProps> = ({
       return () => clearInterval(interval);
     }
 
-    socket.emit('cartela:room_enter', { stake: settings.selectedStake }, (res: any) => {
-      if (res && res.ok && res.state) {
-        if (typeof res.state.startsAt === 'number' && res.state.status === 'waiting') {
-          setServerStartsAt(res.state.startsAt);
-          setTimeLeft(computeRemaining(res.state.startsAt));
-        }
-        if (res.state.status === 'in_progress') {
-          if (res.joinedPlayer?.cardIds?.length > 0) {
-            setSelectedCartelaIds(res.joinedPlayer.cardIds);
-            const cards = res.joinedPlayer.cards || res.joinedPlayer.cardIds.map((id: number) => generateCartelaByNumber(id));
-            onConfirmSelection(cards, res.state.playerCount, res.state.totalCards, res.joinedPlayer.walletType || walletType);
-          } else if (selectedCartelaIdsRef.current.length > 0) {
-            handleStartRound();
+    const syncRoom = () => {
+      socket.emit('cartela:room_enter', { stake: settings.selectedStake }, (res: any) => {
+        if (res && res.ok && res.state) {
+          if (typeof res.state.startsAt === 'number' && res.state.status === 'waiting') {
+            setServerStartsAt(res.state.startsAt);
+            setTimeLeft(computeRemaining(res.state.startsAt));
+          }
+          if (res.state.status === 'in_progress') {
+            if (res.joinedPlayer?.cardIds?.length > 0) {
+              setSelectedCartelaIds(res.joinedPlayer.cardIds);
+              const cards = res.joinedPlayer.cards || res.joinedPlayer.cardIds.map((id: number) => generateCartelaByNumber(id));
+              onConfirmSelection(cards, res.state.playerCount, res.state.totalCards, res.joinedPlayer.walletType || walletType);
+            }
           }
         }
-      }
-    });
+      });
+    };
+
+    if (socket.connected) {
+      syncRoom();
+    }
+    socket.on('connect', syncRoom);
 
     const handleReservedList = (data: { stake: number; takenCartelas: Record<number, string> }) => {
       if (data && data.takenCartelas) {
@@ -174,12 +179,7 @@ export const CartelaSelectionView: React.FC<CartelaSelectionViewProps> = ({
             return next;
           });
         }
-        if (data.status === 'in_progress') {
-          if (selectedCartelaIdsRef.current.length > 0) {
-            setTimeLeft(0);
-            handleStartRound();
-          }
-        } else if (typeof data.startsAt === 'number' && data.status === 'waiting') {
+        if (typeof data.startsAt === 'number' && data.status === 'waiting') {
           setServerStartsAt(data.startsAt);
           setTimeLeft(computeRemaining(data.startsAt));
           hasStartedRef.current = false;
@@ -191,6 +191,7 @@ export const CartelaSelectionView: React.FC<CartelaSelectionViewProps> = ({
     socket.on('room:state', handleRoomState);
 
     return () => {
+      socket.off('connect', syncRoom);
       socket.off('cartela:reserved_list', handleReservedList);
       socket.off('room:state', handleRoomState);
       socket.emit('cartela:release', { stake: settings.selectedStake });

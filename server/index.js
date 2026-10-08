@@ -859,7 +859,8 @@ function getPool() {
     connectionString,
     max: 3,
     connectionTimeoutMillis: 5e3,
-    idleTimeoutMillis: 1e4
+    idleTimeoutMillis: 1e4,
+    ssl: connectionString.includes("localhost") || connectionString.includes("127.0.0.1") ? false : { rejectUnauthorized: false }
   }) : null;
   return pool;
 }
@@ -5258,16 +5259,11 @@ ${reason ? `\u{1F4DD} \u121D\u12AD\u1295\u12EB\u1275\u1366 ${reason}
       });
     }
   }
-  if (isPostgresConfigured()) {
-    try {
-      await initializePostgres();
-      console.info("PostgreSQL users, deposits, and withdrawals tables are ready.");
-    } catch (err) {
-      console.warn("PostgreSQL startup initialization failed, falling back to local database:", err?.message || err);
-    }
-  }
   httpServer.listen(Number(PORT), "0.0.0.0", () => {
     console.log(`Salery Bingo Backend running on port ${PORT}`);
+    if (isPostgresConfigured()) {
+      initializePostgres().then(() => console.info("PostgreSQL users, deposits, and withdrawals tables are ready.")).catch((err) => console.warn("PostgreSQL startup initialization failed, falling back to local database:", err?.message || err));
+    }
     try {
       const client = getSupabase();
       if (client) {

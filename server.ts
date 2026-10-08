@@ -4039,17 +4039,14 @@ async function startServer() {
     }
   }
 
-  if (isPostgresConfigured()) {
-    try {
-      await initializePostgres();
-      console.info('PostgreSQL users, deposits, and withdrawals tables are ready.');
-    } catch (err: any) {
-      console.warn('PostgreSQL startup initialization failed, falling back to local database:', err?.message || err);
-    }
-  }
-
   httpServer.listen(Number(PORT), '0.0.0.0', () => {
     console.log(`Salery Bingo Backend running on port ${PORT}`);
+
+    if (isPostgresConfigured()) {
+      initializePostgres()
+        .then(() => console.info('PostgreSQL users, deposits, and withdrawals tables are ready.'))
+        .catch((err: any) => console.warn('PostgreSQL startup initialization failed, falling back to local database:', err?.message || err));
+    }
 
     // Dynamic background sync of local users and transactions to Supabase on server boot
     try {

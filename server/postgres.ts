@@ -183,6 +183,7 @@ function getPool(): Pool | null {
         max: 3,
         connectionTimeoutMillis: 5000,
         idleTimeoutMillis: 10000,
+        ssl: connectionString.includes('localhost') || connectionString.includes('127.0.0.1') ? false : { rejectUnauthorized: false },
       })
     : null;
   return pool;
