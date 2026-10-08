@@ -5353,7 +5353,9 @@ ${reason ? `\u{1F4DD} \u121D\u12AD\u1295\u12EB\u1275\u1366 ${reason}
     }
   });
 }
-startServer();
+startServer().catch((err) => {
+  console.error("FATAL startServer exception:", err);
+});
 export {
   generatePlayerCode,
   getActiveBotToken,

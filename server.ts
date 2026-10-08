@@ -4147,4 +4147,6 @@ async function startServer() {
   });
 }
 
-startServer();
+startServer().catch((err) => {
+  console.error('FATAL startServer exception:', err);
+});
