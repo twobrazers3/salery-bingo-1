@@ -1,9 +1,8 @@
 import React, { useState, useEffect, useMemo, useCallback } from 'react';
 import { GameSettings, UserProfile, BingoCardModel } from '../types';
 import { generateCartelaByNumber } from '../utils/bingoLogic';
-import { ArrowLeft, RotateCw, Star, ChevronDown, Settings } from 'lucide-react';
+import { ArrowLeft, RotateCw, Star, ChevronDown } from 'lucide-react';
 import { sounds } from '../utils/audio';
-import { getStoredBackendUrl, setStoredBackendUrl } from '../utils/api';
 
 interface CartelaSelectionViewProps {
   user: UserProfile;
@@ -89,9 +88,6 @@ export const CartelaSelectionView: React.FC<CartelaSelectionViewProps> = ({
   const [previewCartelaId, setPreviewCartelaId] = useState<number | null>(null);
   const previewCartelaIdRef = React.useRef<number | null>(null);
   previewCartelaIdRef.current = previewCartelaId;
-
-  const [showServerModal, setShowServerModal] = useState(false);
-  const [serverUrlInput, setServerUrlInput] = useState(() => getStoredBackendUrl());
 
   const selectedCount = selectedCartelaIds.length;
   const currentTotalStake = selectedCount * settings.selectedStake;
@@ -421,73 +417,7 @@ export const CartelaSelectionView: React.FC<CartelaSelectionViewProps> = ({
         </button>
       </div>
 
-      {/* Live Server Connection Indicator */}
-      <div
-        onClick={() => setShowServerModal(true)}
-        className="flex items-center justify-between px-3 py-1.5 mb-2 bg-[#1a1433] hover:bg-[#251d48] cursor-pointer border border-[#2d2254] hover:border-[#4d3b85] rounded-xl text-[10px] transition-all shadow-sm active:scale-[0.99]"
-      >
-        <div className="flex items-center gap-1.5">
-          <span className={`w-2 h-2 rounded-full ${socket?.connected ? 'bg-emerald-400' : 'bg-amber-400 animate-pulse'}`} />
-          <span className={socket?.connected ? 'text-emerald-400 font-bold' : 'text-amber-300 font-medium'}>
-            {socket?.connected ? 'የቀጥታ ክፍል ተገናኝቷል (Live Room)' : 'ከሰርቨሩ ጋር በመገናኘት ላይ... (ይጫኑ)'}
-          </span>
-        </div>
-        <div className="flex items-center gap-1.5 text-slate-400 font-mono text-[9px]">
-          <span>{socket?.connected ? `ተጫዋቾች: ${1 + (remoteClaims.size || 0)}` : 'ቅንብር'}</span>
-          <Settings className="w-3 h-3 text-slate-400" />
-        </div>
-      </div>
 
-      {/* Server URL Config Modal */}
-      {showServerModal && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/80 p-4 backdrop-blur-sm animate-fadeIn">
-          <div className="w-full max-w-sm rounded-2xl bg-[#1a1532] border border-[#3c3065] p-5 shadow-2xl">
-            <h3 className="text-sm font-bold text-white mb-2 flex items-center gap-2">
-              <span className={`w-2.5 h-2.5 rounded-full ${socket?.connected ? 'bg-emerald-400' : 'bg-amber-400'}`} />
-              የጨዋታ ሰርቨር አድራሻ (Server URL)
-            </h3>
-            <p className="text-xs text-slate-300 mb-3">
-              ሁኔታ (Status):{' '}
-              <strong className={socket?.connected ? 'text-emerald-400' : 'text-amber-400'}>
-                {socket?.connected ? '🟢 ኦንላይን ተገናኝቷል (Online)' : '🟡 አልተገናኘም / በመገናኘት ላይ... (Connecting)'}
-              </strong>
-            </p>
-            <div className="mb-3">
-              <label className="text-[11px] text-slate-400 block mb-1">
-                የ Railway ወይም Backend URL ያስገቡ:
-              </label>
-              <input
-                type="text"
-                value={serverUrlInput}
-                onChange={(e) => setServerUrlInput(e.target.value)}
-                placeholder="https://salery-bingo-1-production.up.railway.app"
-                className="w-full rounded-xl bg-[#0f0b20] border border-[#3c3065] px-3 py-2 text-xs text-white focus:outline-none focus:border-purple-500 font-mono"
-              />
-            </div>
-            <div className="flex gap-2">
-              <button
-                type="button"
-                onClick={() => {
-                  if (serverUrlInput.trim()) {
-                    setStoredBackendUrl(serverUrlInput.trim());
-                    window.location.reload();
-                  }
-                }}
-                className="flex-1 py-2 bg-emerald-600 hover:bg-emerald-500 rounded-xl text-xs font-bold text-white shadow transition-all active:scale-95"
-              >
-                አስቀምጥና አገናኝ (Save & Reload)
-              </button>
-              <button
-                type="button"
-                onClick={() => setShowServerModal(false)}
-                className="px-4 py-2 bg-slate-700 hover:bg-slate-600 rounded-xl text-xs font-bold text-slate-200 transition-all"
-              >
-                ዝጋ (Close)
-              </button>
-            </div>
-          </div>
-        </div>
-      )}
 
       {/* 4 Status Info Cards: Main Wallet | Play Wallet | Stake | Timer */}
       <div className="grid grid-cols-4 gap-1.5 mb-2">
