@@ -1,0 +1,6 @@
+{
+  "name": "GitHub App Workspace",
+  "description": "Workspace ready for cloning and running your GitHub projects.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}

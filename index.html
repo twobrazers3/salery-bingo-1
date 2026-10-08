@@ -1,0 +1,29 @@
+<!doctype html>
+<html lang="am" class="dark">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no" />
+    <title>Salery Bingo - ሳለሪ ቢንጎ</title>
+    <meta name="description" content="Salery Bingo (ሳለሪ ቢንጎ) Telegram WebApp featuring live 75-ball caller, multi-card play, stake selection, real-time leaderboard, history, and wallet management." />
+    <meta property="og:title" content="Salery Bingo - ሳለሪ ቢንጎ" />
+    <meta property="og:description" content="Salery Bingo (ሳለሪ ቢንጎ) Telegram WebApp featuring live 75-ball caller, multi-card play, stake selection, real-time leaderboard, history, and wallet management." />
+    <!-- Telegram Web App SDK -->
+    <script src="https://telegram.org/js/telegram-web-app.js"></script>
+    <script>
+      (function() {
+        try {
+          if (window.Telegram && window.Telegram.WebApp) {
+            window.Telegram.WebApp.ready();
+            window.Telegram.WebApp.expand();
+          }
+        } catch (e) {
+          console.warn('Telegram WebApp init warning:', e);
+        }
+      })();
+    </script>
+  </head>
+  <body class="bg-slate-950 text-slate-100 min-h-screen antialiased select-none selection:bg-amber-500 selection:text-black">
+    <div id="root"></div>
+    <script type="module" src="/src/main.tsx"></script>
+  </body>
+</html>
