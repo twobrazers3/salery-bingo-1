@@ -905,7 +905,13 @@ export function resolveBackendUrl(): string {
   if (process.env.BACKEND_URL && process.env.BACKEND_URL.startsWith('http') && !isStaticFrontendUrl(process.env.BACKEND_URL)) {
     return process.env.BACKEND_URL.replace(/\/$/, '');
   }
-  return 'https://ais-dev-n7hfp7ineospoo3ytgchc2-764674792620.europe-west2.run.app';
+  if (process.env.RAILWAY_PUBLIC_DOMAIN) {
+    return `https://${process.env.RAILWAY_PUBLIC_DOMAIN}`.replace(/\/$/, '');
+  }
+  if (process.env.RAILWAY_STATIC_URL) {
+    return `https://${process.env.RAILWAY_STATIC_URL}`.replace(/\/$/, '');
+  }
+  return 'https://salery-bingo-1-production.up.railway.app';
 }
 
 /**
@@ -4032,10 +4038,8 @@ async function startServer() {
     try {
       await initializePostgres();
       console.info('PostgreSQL users, deposits, and withdrawals tables are ready.');
-    } catch (err) {
-      console.error('PostgreSQL startup initialization failed:', err);
-      process.exitCode = 1;
-      return;
+    } catch (err: any) {
+      console.warn('PostgreSQL startup initialization failed, falling back to local database:', err?.message || err);
     }
   }
 

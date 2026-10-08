@@ -359,17 +359,16 @@ export function attachBingoRooms(io: Server, botToken: string) {
   const scheduleRoom = (roomId: string, state: BingoRoomState) => {
     if (activeTimers.has(roomId)) return;
 
-    const delay = Math.max(0, state.startsAt - Date.now());
+    // Grace buffer allows all network clients whose timer hits 0 to submit their room:join
+    const delay = Math.max(0, state.startsAt - Date.now()) + 1200;
     const timer = setTimeout(async () => {
       activeTimers.delete(roomId);
 
       const latest = localRooms.get(roomId);
       if (!latest || latest.status !== 'waiting') return;
 
-      const reservedCount = Object.keys(cartelaReservations[latest.stake] || {}).length;
-
-      // Only restart countdown if NO cartelas are reserved and NO players joined!
-      if (latest.players.length === 0 && reservedCount === 0) {
+      // Only restart countdown if NO players joined with cartelas
+      if (latest.players.length === 0) {
         latest.startsAt = Date.now() + ROOM_JOIN_WINDOW_MS;
         localRooms.set(roomId, latest);
         sendRoomState(io, roomId, latest);
@@ -377,7 +376,7 @@ export function attachBingoRooms(io: Server, botToken: string) {
         return;
       }
 
-      // If a player is ready, start the game immediately!
+      // Players have joined! Start the shared synchronized game for all participants!
       await startRoomGame(roomId, latest);
     }, delay);
 
@@ -602,10 +601,6 @@ export function attachBingoRooms(io: Server, botToken: string) {
         broadcastCartelaReservations(stake);
 
         sendRoomState(io, roomId, state);
-
-        if (state.status === 'waiting') {
-          void startRoomGame(roomId, state);
-        }
 
         const clientCards = cardIds.map((id) => generateCartelaByNumber(id));
         ack({

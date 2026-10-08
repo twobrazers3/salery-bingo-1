@@ -1580,13 +1580,12 @@ function attachBingoRooms(io, botToken) {
   };
   const scheduleRoom = (roomId, state) => {
     if (activeTimers.has(roomId)) return;
-    const delay = Math.max(0, state.startsAt - Date.now());
+    const delay = Math.max(0, state.startsAt - Date.now()) + 1200;
     const timer = setTimeout(async () => {
       activeTimers.delete(roomId);
       const latest = localRooms.get(roomId);
       if (!latest || latest.status !== "waiting") return;
-      const reservedCount = Object.keys(cartelaReservations[latest.stake] || {}).length;
-      if (latest.players.length === 0 && reservedCount === 0) {
+      if (latest.players.length === 0) {
         latest.startsAt = Date.now() + ROOM_JOIN_WINDOW_MS;
         localRooms.set(roomId, latest);
         sendRoomState(io, roomId, latest);
@@ -1770,9 +1769,6 @@ function attachBingoRooms(io, botToken) {
         cartelaReservations[stake] = userRes;
         broadcastCartelaReservations(stake);
         sendRoomState(io, roomId, state);
-        if (state.status === "waiting") {
-          void startRoomGame(roomId, state);
-        }
         const clientCards = cardIds.map((id) => generateCartelaByNumber(id));
         ack({
           ok: true,
@@ -2596,7 +2592,13 @@ function resolveBackendUrl() {
   if (process.env.BACKEND_URL && process.env.BACKEND_URL.startsWith("http") && !isStaticFrontendUrl(process.env.BACKEND_URL)) {
     return process.env.BACKEND_URL.replace(/\/$/, "");
   }
-  return "https://ais-dev-n7hfp7ineospoo3ytgchc2-764674792620.europe-west2.run.app";
+  if (process.env.RAILWAY_PUBLIC_DOMAIN) {
+    return `https://${process.env.RAILWAY_PUBLIC_DOMAIN}`.replace(/\/$/, "");
+  }
+  if (process.env.RAILWAY_STATIC_URL) {
+    return `https://${process.env.RAILWAY_STATIC_URL}`.replace(/\/$/, "");
+  }
+  return "https://salery-bingo-1-production.up.railway.app";
 }
 function resolveWebAppUrl() {
   if (process.env.CLIENT_URL && process.env.CLIENT_URL.startsWith("http") && !process.env.CLIENT_URL.includes("ais-pre-") && !process.env.CLIENT_URL.includes("yeya-bingo")) {
@@ -5258,9 +5260,7 @@ ${reason ? `\u{1F4DD} \u121D\u12AD\u1295\u12EB\u1275\u1366 ${reason}
       await initializePostgres();
       console.info("PostgreSQL users, deposits, and withdrawals tables are ready.");
     } catch (err) {
-      console.error("PostgreSQL startup initialization failed:", err);
-      process.exitCode = 1;
-      return;
+      console.warn("PostgreSQL startup initialization failed, falling back to local database:", err?.message || err);
     }
   }
   httpServer.listen(Number(PORT), "0.0.0.0", () => {

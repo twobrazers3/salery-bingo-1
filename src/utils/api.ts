@@ -77,15 +77,6 @@ export function getAutoDiscoveredRailwayUrl(): string {
     if (envBackend && typeof envBackend === 'string' && envBackend.startsWith('http')) {
       return envBackend.replace(/\/$/, '');
     }
-    const hostname = window.location.hostname;
-    if (hostname.endsWith('.vercel.app')) {
-      const prefix = hostname.replace('.vercel.app', '');
-      return `https://${prefix}-production.up.railway.app`;
-    }
-    if (hostname.endsWith('.netlify.app')) {
-      const prefix = hostname.replace('.netlify.app', '');
-      return `https://${prefix}-production.up.railway.app`;
-    }
   }
   return 'https://salery-bingo-1-production.up.railway.app';
 }
@@ -94,11 +85,8 @@ export function getAutoDiscoveredRailwayUrl(): string {
  * Real-time Cloud Backend Server URLs running the bot and local database
  */
 export const LIVE_CLOUD_BACKENDS = [
-  getAutoDiscoveredRailwayUrl(),
-  'https://yeya-bingo-production.up.railway.app',
+  'https://salery-bingo-1-production.up.railway.app',
   'https://salery-bingo-backend-production.up.railway.app',
-  'https://ais-dev-n7hfp7ineospoo3ytgchc2-764674792620.europe-west2.run.app',
-  'https://ais-pre-n7hfp7ineospoo3ytgchc2-764674792620.europe-west2.run.app',
 ];
 
 export const PRIMARY_LIVE_BACKEND = getAutoDiscoveredRailwayUrl();

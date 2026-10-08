@@ -232,9 +232,18 @@ export const CartelaSelectionView: React.FC<CartelaSelectionViewProps> = ({
     // ONLY start the game if cartelas have actually been selected by the player!
     if (effectiveIds.length === 0) {
       hasStartedRef.current = false;
-      const nextTarget = Date.now() + 35000;
-      setServerStartsAt(nextTarget);
-      setTimeLeft(35);
+      if (socket?.connected) {
+        socket.emit('cartela:room_enter', { stake: settings.selectedStake }, (res: any) => {
+          if (res?.ok && res?.state?.startsAt) {
+            setServerStartsAt(res.state.startsAt);
+            setTimeLeft(computeRemaining(res.state.startsAt));
+          }
+        });
+      } else {
+        const nextTarget = Date.now() + 35000;
+        setServerStartsAt(nextTarget);
+        setTimeLeft(35);
+      }
       return;
     }
 
@@ -282,10 +291,19 @@ export const CartelaSelectionView: React.FC<CartelaSelectionViewProps> = ({
         if (selectedCartelaIdsRef.current.length > 0) {
           handleStartRound();
         } else {
-          // Reset target for the next round so countdown continues ticking
-          const nextTarget = Date.now() + 35000;
-          setServerStartsAt(nextTarget);
-          setTimeLeft(35);
+          // Keep in sync with server countdown
+          if (socket?.connected) {
+            socket.emit('cartela:room_enter', { stake: settings.selectedStake }, (res: any) => {
+              if (res?.ok && res?.state?.startsAt) {
+                setServerStartsAt(res.state.startsAt);
+                setTimeLeft(computeRemaining(res.state.startsAt));
+              }
+            });
+          } else {
+            const nextTarget = Date.now() + 35000;
+            setServerStartsAt(nextTarget);
+            setTimeLeft(35);
+          }
         }
       }
     }, 1000);
