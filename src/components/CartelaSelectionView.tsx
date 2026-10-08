@@ -289,22 +289,21 @@ export const CartelaSelectionView: React.FC<CartelaSelectionViewProps> = ({
       setTimeLeft(remaining);
 
       if (remaining <= 0 && !hasStartedRef.current) {
+        if (!socket?.connected) {
+          // Stay on countdown until socket connects to central room
+          setTimeLeft(35);
+          return;
+        }
         if (selectedCartelaIdsRef.current.length > 0) {
           handleStartRound();
         } else {
           // Keep in sync with server countdown
-          if (socket?.connected) {
-            socket.emit('cartela:room_enter', { stake: settings.selectedStake }, (res: any) => {
-              if (res?.ok && res?.state?.startsAt) {
-                setServerStartsAt(res.state.startsAt);
-                setTimeLeft(computeRemaining(res.state.startsAt));
-              }
-            });
-          } else {
-            const nextTarget = Date.now() + 35000;
-            setServerStartsAt(nextTarget);
-            setTimeLeft(35);
-          }
+          socket.emit('cartela:room_enter', { stake: settings.selectedStake }, (res: any) => {
+            if (res?.ok && res?.state?.startsAt) {
+              setServerStartsAt(res.state.startsAt);
+              setTimeLeft(computeRemaining(res.state.startsAt));
+            }
+          });
         }
       }
     }, 1000);
@@ -416,6 +415,19 @@ export const CartelaSelectionView: React.FC<CartelaSelectionViewProps> = ({
           <RotateCw className="w-3.5 h-3.5" />
           <span>Refresh</span>
         </button>
+      </div>
+
+      {/* Live Server Connection Indicator */}
+      <div className="flex items-center justify-between px-3 py-1 mb-2 bg-[#1a1433] border border-[#2d2254] rounded-xl text-[10px]">
+        <div className="flex items-center gap-1.5">
+          <span className={`w-2 h-2 rounded-full ${socket?.connected ? 'bg-emerald-400' : 'bg-amber-400 animate-pulse'}`} />
+          <span className={socket?.connected ? 'text-emerald-400 font-bold' : 'text-amber-300 font-medium'}>
+            {socket?.connected ? 'የቀጥታ ክፍል ተገናኝቷል (Live Room)' : 'ከሰርቨሩ ጋር በመገናኘት ላይ... (Connecting)'}
+          </span>
+        </div>
+        <span className="text-slate-400 font-mono text-[9px]">
+          {socket?.connected ? `ተጫዋቾች: ${1 + (remoteClaims.size || 0)}` : 'እባክዎ ይጠብቁ'}
+        </span>
       </div>
 
       {/* 4 Status Info Cards: Main Wallet | Play Wallet | Stake | Timer */}

@@ -1137,13 +1137,12 @@ export default function App() {
       applyRoomSnapshot(result.state);
       sounds.playBeep(true);
       setStatus(result.state.status === 'finished' ? 'game_over' : 'in_progress');
-    } catch (error) {
+    } catch (error: any) {
       activeRoomRequestedRef.current = false;
       console.warn('Game room join issue:', error);
-      // Fallback: Ensure the player always transitions to the live gameplay / caller screen!
-      setCards(selectedCards);
-      sounds.playBeep(true);
-      setStatus('in_progress');
+      showToast('⚠️ ከጨዋታ ሰርቨሩ ጋር መገናኘት አልተቻለም፤ እባክዎ ጥቂት ቆይተው እንደገና ይሞክሩ');
+      sounds.playBeep(false);
+      setStatus('cartela_select');
     }
   };
 

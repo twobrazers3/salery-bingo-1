@@ -4039,7 +4039,7 @@ async function startLongPolling(botToken) {
 async function startServer() {
   const app = express();
   const httpServer = createServer(app);
-  const PORT = Number(process.env.PORT) || 3e3;
+  const PORT = Number(process.env.PORT) || 8080;
   const socketServer = new SocketServer(httpServer, {
     cors: {
       origin: (_origin, callback) => callback(null, true),
