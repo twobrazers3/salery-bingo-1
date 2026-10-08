@@ -532,9 +532,6 @@ var LocalSecureDatabase = class {
 };
 var localDb = new LocalSecureDatabase();
 
-// server/bingo.ts
-import { randomUUID } from "node:crypto";
-
 // src/utils/bingoLogic.ts
 var BINGO_LETTERS = ["B", "I", "N", "G", "O"];
 function getLetterForNumber(num) {
@@ -1295,7 +1292,6 @@ async function deletePostgresTransaction(id) {
 }
 
 // server/bingo.ts
-var ROOM_JOIN_WINDOW_MS = 35e3;
 var BALL_INTERVAL_MS = 3e3;
 var VALID_STAKES = /* @__PURE__ */ new Set([10]);
 function validateTelegramInitData(initData, botToken, allowLocalMock = true) {
@@ -1340,12 +1336,23 @@ function validateTelegramInitData(initData, botToken, allowLocalMock = true) {
     username: "player"
   };
 }
+function getNextAlignedStartsAt(now = Date.now()) {
+  const cycleIndex = Math.floor(now / 75e3);
+  const cycleStart = cycleIndex * 75e3;
+  let target = cycleStart + 35e3;
+  if (target <= now + 2e3) {
+    target = (cycleIndex + 1) * 75e3 + 35e3;
+  }
+  return target;
+}
 function makeRoomState(stake) {
+  const startsAt = getNextAlignedStartsAt();
+  const cycleIndex = Math.floor(startsAt / 75e3);
   return {
-    gameId: randomUUID(),
+    gameId: `salery-live-${cycleIndex}`,
     stake,
     status: "waiting",
-    startsAt: Date.now() + ROOM_JOIN_WINDOW_MS,
+    startsAt,
     deck: generateShuffledDeck().map((ball) => ball.number),
     called: [],
     prizePool: 0,
@@ -1587,7 +1594,9 @@ function attachBingoRooms(io, botToken) {
       const latest = localRooms.get(roomId);
       if (!latest || latest.status !== "waiting") return;
       if (latest.players.length === 0) {
-        latest.startsAt = Date.now() + ROOM_JOIN_WINDOW_MS;
+        latest.startsAt = getNextAlignedStartsAt();
+        const cycleIndex = Math.floor(latest.startsAt / 75e3);
+        latest.gameId = `salery-live-${cycleIndex}`;
         localRooms.set(roomId, latest);
         sendRoomState(io, roomId, latest);
         scheduleRoom(roomId, latest);

@@ -367,3 +367,38 @@ export function generateCompetitors(): CompetitorPlayer[] {
     hasWon: false
   }));
 }
+
+export const GLOBAL_ROUND_CYCLE_MS = 75_000;
+export const GLOBAL_SELECTION_WINDOW_MS = 35_000;
+
+export interface GlobalBingoCycleInfo {
+  cycleIndex: number;
+  gameId: string;
+  cycleStart: number;
+  selectionEndsAt: number;
+  roundEndsAt: number;
+  isSelectionPhase: boolean;
+  remainingSeconds: number;
+}
+
+export function getGlobalBingoCycle(now = Date.now()): GlobalBingoCycleInfo {
+  const cycleIndex = Math.floor(now / GLOBAL_ROUND_CYCLE_MS);
+  const cycleStart = cycleIndex * GLOBAL_ROUND_CYCLE_MS;
+  const selectionEndsAt = cycleStart + GLOBAL_SELECTION_WINDOW_MS;
+  const roundEndsAt = cycleStart + GLOBAL_ROUND_CYCLE_MS;
+
+  const isSelectionPhase = now < selectionEndsAt;
+  const remainingSeconds = isSelectionPhase
+    ? Math.max(0, Math.ceil((selectionEndsAt - now) / 1000))
+    : Math.max(0, Math.ceil((roundEndsAt - now) / 1000));
+
+  return {
+    cycleIndex,
+    gameId: `salery-live-${cycleIndex}`,
+    cycleStart,
+    selectionEndsAt,
+    roundEndsAt,
+    isSelectionPhase,
+    remainingSeconds,
+  };
+}

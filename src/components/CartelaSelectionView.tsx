@@ -1,6 +1,6 @@
 import React, { useState, useEffect, useMemo, useCallback } from 'react';
 import { GameSettings, UserProfile, BingoCardModel } from '../types';
-import { generateCartelaByNumber } from '../utils/bingoLogic';
+import { generateCartelaByNumber, getGlobalBingoCycle, GLOBAL_SELECTION_WINDOW_MS, GLOBAL_ROUND_CYCLE_MS } from '../utils/bingoLogic';
 import { ArrowLeft, RotateCw, Star, ChevronDown } from 'lucide-react';
 import { sounds } from '../utils/audio';
 
@@ -41,7 +41,8 @@ export const CartelaSelectionView: React.FC<CartelaSelectionViewProps> = ({
     if (typeof roomStartsAt === 'number' && roomStartsAt > Date.now()) {
       return roomStartsAt;
     }
-    return Date.now() + 35000;
+    const cycle = getGlobalBingoCycle();
+    return cycle.isSelectionPhase ? cycle.selectionEndsAt : cycle.roundEndsAt + GLOBAL_SELECTION_WINDOW_MS;
   });
 
   const computeRemaining = useCallback((targetTs: number) => {
@@ -233,18 +234,9 @@ export const CartelaSelectionView: React.FC<CartelaSelectionViewProps> = ({
     // ONLY start the game if cartelas have actually been selected by the player!
     if (effectiveIds.length === 0) {
       hasStartedRef.current = false;
-      if (socket?.connected) {
-        socket.emit('cartela:room_enter', { stake: settings.selectedStake }, (res: any) => {
-          if (res?.ok && res?.state?.startsAt) {
-            setServerStartsAt(res.state.startsAt);
-            setTimeLeft(computeRemaining(res.state.startsAt));
-          }
-        });
-      } else {
-        const nextTarget = Date.now() + 35000;
-        setServerStartsAt(nextTarget);
-        setTimeLeft(35);
-      }
+      const nextCycle = getGlobalBingoCycle(Date.now() + 2000);
+      setServerStartsAt(nextCycle.selectionEndsAt);
+      setTimeLeft(nextCycle.remainingSeconds);
       return;
     }
 
@@ -285,25 +277,28 @@ export const CartelaSelectionView: React.FC<CartelaSelectionViewProps> = ({
   // Robust countdown timer: updates every second and launches when timer reaches 0
   useEffect(() => {
     const timer = setInterval(() => {
-      const remaining = computeRemaining(serverStartsAt);
+      const now = Date.now();
+      let target = serverStartsAt;
+      if (typeof roomStartsAt === 'number' && roomStartsAt > now) {
+        target = roomStartsAt;
+      } else if (!target || target <= now) {
+        const cycle = getGlobalBingoCycle(now);
+        target = cycle.isSelectionPhase ? cycle.selectionEndsAt : cycle.cycleStart + GLOBAL_ROUND_CYCLE_MS + GLOBAL_SELECTION_WINDOW_MS;
+        setServerStartsAt(target);
+      }
+
+      const remaining = Math.max(0, Math.ceil((target - now) / 1000));
       setTimeLeft(remaining);
 
       if (remaining <= 0 && !hasStartedRef.current) {
-        if (!socket?.connected) {
-          // Stay on countdown until socket connects to central room
-          setTimeLeft(35);
-          return;
-        }
         if (selectedCartelaIdsRef.current.length > 0) {
           handleStartRound();
         } else {
-          // Keep in sync with server countdown
-          socket.emit('cartela:room_enter', { stake: settings.selectedStake }, (res: any) => {
-            if (res?.ok && res?.state?.startsAt) {
-              setServerStartsAt(res.state.startsAt);
-              setTimeLeft(computeRemaining(res.state.startsAt));
-            }
-          });
+          // Advance to next synchronized cycle
+          const nextCycle = getGlobalBingoCycle(now + 2000);
+          const nextTarget = nextCycle.selectionEndsAt;
+          setServerStartsAt(nextTarget);
+          setTimeLeft(nextCycle.remainingSeconds);
         }
       }
     }, 1000);
@@ -311,7 +306,7 @@ export const CartelaSelectionView: React.FC<CartelaSelectionViewProps> = ({
     return () => {
       clearInterval(timer);
     };
-  }, [serverStartsAt, computeRemaining, handleStartRound]);
+  }, [serverStartsAt, roomStartsAt, handleStartRound]);
 
   // Handle cartel cell click
   const handleCartelaClick = (cartelaNum: number) => {

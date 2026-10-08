@@ -73,12 +73,24 @@ export function validateTelegramInitData(initData: string, botToken: string, all
   };
 }
 
+function getNextAlignedStartsAt(now = Date.now()): number {
+  const cycleIndex = Math.floor(now / 75000);
+  const cycleStart = cycleIndex * 75000;
+  let target = cycleStart + 35000;
+  if (target <= now + 2000) {
+    target = (cycleIndex + 1) * 75000 + 35000;
+  }
+  return target;
+}
+
 function makeRoomState(stake: number): BingoRoomState {
+  const startsAt = getNextAlignedStartsAt();
+  const cycleIndex = Math.floor(startsAt / 75000);
   return {
-    gameId: randomUUID(),
+    gameId: `salery-live-${cycleIndex}`,
     stake,
     status: 'waiting',
-    startsAt: Date.now() + ROOM_JOIN_WINDOW_MS,
+    startsAt,
     deck: generateShuffledDeck().map((ball) => ball.number),
     called: [],
     prizePool: 0,
@@ -362,7 +374,9 @@ export function attachBingoRooms(io: Server, botToken: string) {
 
       // Only restart countdown if NO players joined with cartelas
       if (latest.players.length === 0) {
-        latest.startsAt = Date.now() + ROOM_JOIN_WINDOW_MS;
+        latest.startsAt = getNextAlignedStartsAt();
+        const cycleIndex = Math.floor(latest.startsAt / 75000);
+        latest.gameId = `salery-live-${cycleIndex}`;
         localRooms.set(roomId, latest);
         sendRoomState(io, roomId, latest);
         scheduleRoom(roomId, latest);
