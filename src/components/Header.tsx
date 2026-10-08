@@ -1,5 +1,5 @@
 import React from 'react';
-import { Volume2, VolumeX, Mic, MicOff, Globe, Sparkles, PlusCircle, ArrowUpRight, HelpCircle, BarChart3 } from 'lucide-react';
+import { Volume2, VolumeX, Mic, MicOff, Globe, Sparkles, HelpCircle, BarChart3 } from 'lucide-react';
 import { UserProfile } from '../types';
 import { translations } from '../utils/translations';
 
@@ -11,8 +11,6 @@ interface HeaderProps {
   onToggleSound: () => void;
   onToggleVoice: () => void;
   onToggleLanguage: () => void;
-  onOpenDeposit: () => void;
-  onOpenWithdraw: () => void;
   onOpenRules: () => void;
   onOpenStats: () => void;
   onOpenAdmin?: () => void;
@@ -26,8 +24,6 @@ export const Header: React.FC<HeaderProps> = ({
   onToggleSound,
   onToggleVoice,
   onToggleLanguage,
-  onOpenDeposit,
-  onOpenWithdraw,
   onOpenRules,
   onOpenStats,
   onOpenAdmin
