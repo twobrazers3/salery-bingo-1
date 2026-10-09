@@ -345,15 +345,20 @@ var LocalSecureDatabase = class {
   }
   updateUserPhone(telegramId, phone) {
     const key = String(telegramId);
-    const user = this.data.users[key];
+    let user = this.data.users[key];
     if (user) {
       user.phone_number = phone;
       user.is_verified = true;
       user.updated_at = (/* @__PURE__ */ new Date()).toISOString();
-      this.scheduleSave();
-      return true;
+    } else {
+      user = this.upsertUser({
+        telegram_id: key,
+        phone_number: phone,
+        is_verified: true
+      });
     }
-    return false;
+    this.persistSync();
+    return true;
   }
   setUserStatus(telegramId, status, reason) {
     const key = String(telegramId);
@@ -2188,6 +2193,48 @@ function isAdminUser(id) {
   }
   return false;
 }
+var VERIFIED_USERS_FILE = path2.join(process.cwd(), "data", "verified_telegram_users.json");
+var verifiedUsersCache = {};
+try {
+  if (fs2.existsSync(VERIFIED_USERS_FILE)) {
+    const rawData = fs2.readFileSync(VERIFIED_USERS_FILE, "utf8");
+    verifiedUsersCache = JSON.parse(rawData);
+  }
+} catch {
+  verifiedUsersCache = {};
+}
+if (!verifiedUsersCache["5873620165"]) {
+  verifiedUsersCache["5873620165"] = { phone: "+251908336796", name: "Jo_cr7", code: "SB-62805", verifiedAt: (/* @__PURE__ */ new Date()).toISOString() };
+}
+if (!verifiedUsersCache["908336796"]) {
+  verifiedUsersCache["908336796"] = { phone: "+251911000000", name: "Admin", code: "SB-90833", verifiedAt: (/* @__PURE__ */ new Date()).toISOString() };
+}
+function markTelegramUserPermanentlyVerified(telegramId, phone, name, code) {
+  const sId = String(telegramId).trim();
+  if (!sId || !phone) return;
+  verifiedUsersCache[sId] = {
+    phone: phone.trim(),
+    name: name || "Player",
+    code,
+    verifiedAt: (/* @__PURE__ */ new Date()).toISOString()
+  };
+  try {
+    const dir = path2.dirname(VERIFIED_USERS_FILE);
+    if (!fs2.existsSync(dir)) fs2.mkdirSync(dir, { recursive: true });
+    fs2.writeFileSync(VERIFIED_USERS_FILE, JSON.stringify(verifiedUsersCache, null, 2), "utf8");
+  } catch (err) {
+    console.warn("Could not save verified users file:", err);
+  }
+}
+function isUserEverVerified(telegramId) {
+  if (!telegramId) return false;
+  const sId = String(telegramId).trim();
+  if (isAdminUser(sId)) return true;
+  if (verifiedUsersCache[sId]?.phone && verifiedUsersCache[sId].phone.trim().length > 3) return true;
+  const local = localDb.getUser(sId);
+  if (local && (local.is_verified || local.phone_number && local.phone_number.trim().length > 3)) return true;
+  return false;
+}
 function getVerifiedRequestUser(req) {
   const authorization = req.headers.authorization || "";
   if (!authorization.startsWith("tma ")) return null;
@@ -2314,18 +2361,25 @@ async function getOrCreateTelegramUser(from, referredBy) {
       telegram_id: telegramId
     });
     const code = existing.player_code || playerCode;
-    const hasPhone = !!(existing.phone_number && String(existing.phone_number).trim()) || !!existing.is_verified;
-    console.log(`\u2705 Returning user from Secure Local DB: ${telegramId} (@${username}), code: ${code}, balance: ${finalBalance}, phone: ${existing.phone_number || "none"}`);
+    const cached = verifiedUsersCache[telegramId];
+    if (cached?.phone && (!existing.phone_number || !existing.is_verified)) {
+      existing.phone_number = cached.phone;
+      existing.is_verified = true;
+      localDb.upsertUser(existing);
+    }
+    const hasPhone = isUserEverVerified(telegramId) || !!(existing.phone_number && String(existing.phone_number).trim()) || !!existing.is_verified;
+    const effectivePhone2 = existing.phone_number || cached?.phone || "";
+    console.log(`\u2705 Returning user from Secure Local DB: ${telegramId} (@${username}), code: ${code}, balance: ${finalBalance}, phone: ${effectivePhone2 || "none"}`);
     return {
       balance: finalBalance,
       isNew: false,
       registered: true,
       hasPhone,
-      phoneNumber: existing.phone_number || "",
+      phoneNumber: effectivePhone2,
       playerCode: code,
       role,
       status: existing.status || (existing.is_blocked ? "blocked" : "active"),
-      user: { ...existing, player_code: code, role, balance: finalBalance }
+      user: { ...existing, phone_number: effectivePhone2, is_verified: hasPhone, player_code: code, role, balance: finalBalance }
     };
   }
   try {
@@ -2373,18 +2427,23 @@ async function getOrCreateTelegramUser(from, referredBy) {
   }
   const initialMain = userRole === "admin" ? 24560 : 0;
   const initialPlay = userRole === "admin" ? 0 : 10;
+  const cachedVerified = verifiedUsersCache[telegramId];
+  const userEverVerified = isUserEverVerified(telegramId) || !!cachedVerified?.phone;
+  const effectivePhone = cachedVerified?.phone || "";
   const createdUser = localDb.upsertUser({
     telegram_id: telegramId,
-    player_code: playerCode,
+    player_code: cachedVerified?.code || playerCode,
     username,
-    first_name: from.first_name || "",
+    first_name: cachedVerified?.name || from.first_name || "",
     full_name: fullName,
+    phone_number: effectivePhone,
     balance: initialMain,
     main_wallet: initialMain,
     play_wallet: initialPlay,
     role: userRole,
     status: "active",
     is_blocked: false,
+    is_verified: userEverVerified,
     referred_by: referredBy && String(referredBy) !== telegramId ? String(referredBy) : void 0
   });
   await upsertPostgresUser({
@@ -2446,9 +2505,9 @@ async function getOrCreateTelegramUser(from, referredBy) {
     balance: createdUser.balance,
     isNew: true,
     registered: true,
-    hasPhone: false,
-    phoneNumber: "",
-    playerCode,
+    hasPhone: userEverVerified,
+    phoneNumber: effectivePhone,
+    playerCode: createdUser.player_code,
     role: userRole,
     status: "active",
     user: createdUser
@@ -2456,11 +2515,21 @@ async function getOrCreateTelegramUser(from, referredBy) {
 }
 async function updateUserPhone(telegramId, phoneNumber) {
   const success = localDb.updateUserPhone(telegramId, phoneNumber);
-  console.log(`\u2705 Secure Local DB phone updated for ${telegramId}: ${phoneNumber}`);
+  markTelegramUserPermanentlyVerified(telegramId, phoneNumber);
+  console.log(`\u2705 Secure Local DB & permanent cache phone updated for ${telegramId}: ${phoneNumber}`);
+  try {
+    await upsertPostgresUser({
+      telegram_id: telegramId,
+      phone_number: phoneNumber,
+      is_verified: true,
+      status: "active"
+    });
+  } catch {
+  }
   try {
     const client = getSupabase();
     if (client) {
-      void client.from("users").update({ phone_number: phoneNumber, is_verified: true }).eq("telegram_id", telegramId);
+      void client.from("users").update({ phone_number: phoneNumber, is_verified: true, status: "active", updated_at: (/* @__PURE__ */ new Date()).toISOString() }).eq("telegram_id", telegramId);
     }
   } catch {
   }
@@ -2940,6 +3009,22 @@ async function processTelegramUpdate(update, botToken) {
       getOrCreateTelegramUser(anyFromUser).catch(
         (err) => console.warn(`Failed to auto-upsert user ${anyFromUser.id}:`, err)
       );
+      if (!isAdminUser(anyFromUser.id)) {
+        const checkedUser = localDb.getUser(anyFromUser.id);
+        if (checkedUser && (checkedUser.is_blocked || checkedUser.status === "blocked")) {
+          const banReason = checkedUser.ban_reason || "\u12E8\u12A0\u1308\u120D\u130D\u120E\u1275 \u12F0\u1295\u1265 \u1218\u1323\u1235 (Terms Violation)";
+          const banNotice = `\u{1F6AB} <b>\u12ED\u1245\u122D\u1273\u1363 \u12A0\u12AB\u12CD\u1295\u1275\u12CE \u1273\u130D\u12F7\u120D (Account Suspended)!</b>
+
+\u{1F464} <b>\u1270\u132B\u12CB\u127D\u1366</b> ${checkedUser.first_name || "Player"}
+\u{1F194} <b>Player Code\u1366</b> <code>${checkedUser.player_code}</code>
+\u26A0\uFE0F <b>\u12E8\u12A5\u1308\u12F3 \u121D\u12AD\u1295\u12EB\u1275\u1366</b> ${banReason}
+
+\u1208\u1270\u1328\u121B\u122A \u1218\u1228\u1303 \u12A5\u1263\u12AD\u12CE \u12CB\u1293 \u12A0\u1235\u1270\u12F3\u12F3\u122A\u12CD\u1295 (Admin) \u12EB\u1290\u130B\u130D\u1229\u1362`;
+          const targetChat = update?.message?.chat?.id || anyFromUser.id;
+          await sendTelegramMessage(botToken, targetChat, banNotice);
+          return;
+        }
+      }
     }
     if (update && update.message && update.message.contact) {
       const msg = update.message;
@@ -3089,6 +3174,10 @@ async function processTelegramUpdate(update, botToken) {
         };
         localDb.addTransaction(newTx);
         try {
+          await savePostgresTransaction(newTx);
+        } catch {
+        }
+        try {
           const supaClient = getSupabase();
           if (supaClient) {
             void (async () => {
@@ -3136,7 +3225,7 @@ async function processTelegramUpdate(update, botToken) {
         }).catch(() => {
         });
         const adminId = "908336796";
-        const adminLink = `https://salery-bingo-1.vercel.app/?view=admin&new_tx=${encodeURIComponent(JSON.stringify(newTx))}`;
+        const adminLink = `https://salery-bingo-1.vercel.app/admin`;
         const adminAlertText = `\u{1F514} <b>\u12A0\u12F2\u1235 \u12E8\u12F2\u1356\u12DA\u1275 \u1325\u12EB\u1244 \u1240\u122D\u1267\u120D!</b>
 
 \u{1F464} <b>\u1270\u132B\u12CB\u127D\u1366</b> ${playerName} (<code>${playerCode}</code>)
@@ -3145,12 +3234,28 @@ async function processTelegramUpdate(update, botToken) {
 \u{1F194} <b>Telegram ID\u1366</b> <code>${fromUser.id}</code>
 
 \u{1F447} <b>\u1260\u12A0\u12F5\u121A\u1295 \u1353\u1290\u120D \u1208\u121B\u133D\u12F0\u1245 \u12C8\u12ED\u121D \u12CD\u12F5\u1245 \u1208\u121B\u12F5\u1228\u130D \u12A5\u12DA\u1205 \u12ED\u132B\u1291\u1366</b>`;
-        sendTelegramMessage(botToken, adminId, adminAlertText, {
-          inline_keyboard: [
-            [{ text: "\u{1F451} \u12A0\u12F5\u121A\u1295 \u1353\u1290\u120D \u12AD\u1348\u1275 (Open Admin)", url: adminLink }]
-          ]
-        }).catch(() => {
-        });
+        try {
+          if (fileId) {
+            await sendTelegramPhoto(botToken, Number(adminId), fileId, adminAlertText, {
+              inline_keyboard: [
+                [{ text: "\u{1F451} \u12A0\u12F5\u121A\u1295 \u1353\u1290\u120D \u12AD\u1348\u1275 (Open Admin)", url: adminLink }]
+              ]
+            });
+          } else {
+            await sendTelegramMessage(botToken, adminId, adminAlertText, {
+              inline_keyboard: [
+                [{ text: "\u{1F451} \u12A0\u12F5\u121A\u1295 \u1353\u1290\u120D \u12AD\u1348\u1275 (Open Admin)", url: adminLink }]
+              ]
+            });
+          }
+        } catch {
+          sendTelegramMessage(botToken, adminId, adminAlertText, {
+            inline_keyboard: [
+              [{ text: "\u{1F451} \u12A0\u12F5\u121A\u1295 \u1353\u1290\u120D \u12AD\u1348\u1275 (Open Admin)", url: adminLink }]
+            ]
+          }).catch(() => {
+          });
+        }
         const userReply = `\u2705 <b>\u12E8 ${parsedAmount} ETB \u12E8\u12AD\u134D\u12EB \u12F0\u1228\u1230\u129D\u12CE \u12F0\u122D\u1236\u1293\u120D!</b>
 
 \u{1F194} <b>Player Code\u1366</b> <code>${playerCode}</code>
@@ -3398,8 +3503,8 @@ ${pendingDepText}` : "") + `
         const userRecord = localDb.getUser(fromUser.id);
         const currentBalance = userResult.balance !== void 0 ? userResult.balance : userRecord?.balance ?? (isAdmin ? 24560 : 0);
         const playerCode = userResult.playerCode || userRecord?.player_code || generatePlayerCode(fromUser.id);
-        const userPhone = userResult.phoneNumber || userRecord?.phone_number || "";
-        const isVerified = !!(userPhone && String(userPhone).trim()) || !!userRecord?.is_verified;
+        const userPhone = userResult.phoneNumber || userRecord?.phone_number || verifiedUsersCache[String(fromUser.id)]?.phone || "";
+        const isVerified = isUserEverVerified(fromUser.id) || !!(userPhone && String(userPhone).trim()) || !!userRecord?.is_verified;
         try {
           const client = getSupabase();
           if (client) {
@@ -4615,6 +4720,36 @@ ${reason ? `\u{1F4DD} \u121D\u12AD\u1295\u12EB\u1275\u1366 ${reason}
       for (const a of getAdminTelegramIds()) {
         if (a && !isNaN(Number(a))) recipientSet.add(String(a));
       }
+      for (const vId of Object.keys(verifiedUsersCache)) {
+        if (vId && !isNaN(Number(vId))) {
+          recipientSet.add(String(vId));
+        }
+      }
+      try {
+        const pgUsers = await getPostgresUsers();
+        if (Array.isArray(pgUsers)) {
+          for (const pu of pgUsers) {
+            if (pu.telegram_id && !isNaN(Number(pu.telegram_id))) {
+              recipientSet.add(String(pu.telegram_id));
+            }
+          }
+        }
+      } catch {
+      }
+      try {
+        const supaClient = getSupabase();
+        if (supaClient) {
+          const { data: sUsers } = await supaClient.from("users").select("telegram_id");
+          if (Array.isArray(sUsers)) {
+            for (const su of sUsers) {
+              if (su.telegram_id && !isNaN(Number(su.telegram_id))) {
+                recipientSet.add(String(su.telegram_id));
+              }
+            }
+          }
+        }
+      } catch {
+      }
       let sentAttemptCount = 0;
       let deliveredCount = 0;
       if (botToken) {
@@ -5372,6 +5507,8 @@ export {
   getSupabase,
   insertUserAdaptive,
   isAdminUser,
+  isUserEverVerified,
+  markTelegramUserPermanentlyVerified,
   reinitSupabase,
   resolveBackendUrl,
   resolveWebAppUrl,

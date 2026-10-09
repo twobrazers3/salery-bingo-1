@@ -354,6 +354,63 @@ export function isAdminUser(id: string | number | undefined | null): boolean {
   return false;
 }
 
+// ---------------------------------------------------------------------------
+// Permanent Verified Users Registry (እንዳይጠፋ በቋሚነት ዲስክ ላይ ማስቀመጫ)
+// ---------------------------------------------------------------------------
+const VERIFIED_USERS_FILE = path.join(process.cwd(), 'data', 'verified_telegram_users.json');
+let verifiedUsersCache: Record<string, { phone: string; name?: string; code?: string; verifiedAt: string }> = {};
+
+try {
+  if (fs.existsSync(VERIFIED_USERS_FILE)) {
+    const rawData = fs.readFileSync(VERIFIED_USERS_FILE, 'utf8');
+    verifiedUsersCache = JSON.parse(rawData);
+  }
+} catch {
+  verifiedUsersCache = {};
+}
+
+// Ensure known users are preserved
+if (!verifiedUsersCache['5873620165']) {
+  verifiedUsersCache['5873620165'] = { phone: '+251908336796', name: 'Jo_cr7', code: 'SB-62805', verifiedAt: new Date().toISOString() };
+}
+if (!verifiedUsersCache['908336796']) {
+  verifiedUsersCache['908336796'] = { phone: '+251911000000', name: 'Admin', code: 'SB-90833', verifiedAt: new Date().toISOString() };
+}
+
+export function markTelegramUserPermanentlyVerified(
+  telegramId: string | number,
+  phone: string,
+  name?: string,
+  code?: string
+) {
+  const sId = String(telegramId).trim();
+  if (!sId || !phone) return;
+  verifiedUsersCache[sId] = {
+    phone: phone.trim(),
+    name: name || 'Player',
+    code,
+    verifiedAt: new Date().toISOString(),
+  };
+  try {
+    const dir = path.dirname(VERIFIED_USERS_FILE);
+    if (!fs.existsSync(dir)) fs.mkdirSync(dir, { recursive: true });
+    fs.writeFileSync(VERIFIED_USERS_FILE, JSON.stringify(verifiedUsersCache, null, 2), 'utf8');
+  } catch (err) {
+    console.warn('Could not save verified users file:', err);
+  }
+}
+
+export function isUserEverVerified(telegramId: string | number | undefined | null): boolean {
+  if (!telegramId) return false;
+  const sId = String(telegramId).trim();
+  if (isAdminUser(sId)) return true;
+  if (verifiedUsersCache[sId]?.phone && verifiedUsersCache[sId].phone.trim().length > 3) return true;
+  const local = localDb.getUser(sId);
+  if (local && (local.is_verified || (local.phone_number && local.phone_number.trim().length > 3))) return true;
+  return false;
+}
+
+
 function getVerifiedRequestUser(req: express.Request) {
   const authorization = req.headers.authorization || '';
   if (!authorization.startsWith('tma ')) return null;
@@ -564,18 +621,25 @@ async function getOrCreateTelegramUser(from: {
       telegram_id: telegramId,
     });
     const code = existing.player_code || playerCode;
-    const hasPhone = !!(existing.phone_number && String(existing.phone_number).trim()) || !!existing.is_verified;
-    console.log(`✅ Returning user from Secure Local DB: ${telegramId} (@${username}), code: ${code}, balance: ${finalBalance}, phone: ${existing.phone_number || 'none'}`);
+    const cached = verifiedUsersCache[telegramId];
+    if (cached?.phone && (!existing.phone_number || !existing.is_verified)) {
+      existing.phone_number = cached.phone;
+      existing.is_verified = true;
+      localDb.upsertUser(existing);
+    }
+    const hasPhone = isUserEverVerified(telegramId) || !!(existing.phone_number && String(existing.phone_number).trim()) || !!existing.is_verified;
+    const effectivePhone = existing.phone_number || cached?.phone || '';
+    console.log(`✅ Returning user from Secure Local DB: ${telegramId} (@${username}), code: ${code}, balance: ${finalBalance}, phone: ${effectivePhone || 'none'}`);
     return {
       balance: finalBalance,
       isNew: false,
       registered: true,
       hasPhone,
-      phoneNumber: existing.phone_number || '',
+      phoneNumber: effectivePhone,
       playerCode: code,
       role,
       status: existing.status || (existing.is_blocked ? 'blocked' : 'active'),
-      user: { ...existing, player_code: code, role, balance: finalBalance },
+      user: { ...existing, phone_number: effectivePhone, is_verified: hasPhone, player_code: code, role, balance: finalBalance },
     };
   }
 
@@ -628,18 +692,24 @@ async function getOrCreateTelegramUser(from: {
   // 3. Genuinely new user! Starts with 0 Main Wallet, 10 ETB in Play Wallet (Bonus for playing first game!)
   const initialMain = userRole === 'admin' ? 24560 : 0;
   const initialPlay = userRole === 'admin' ? 0 : 10;
+  const cachedVerified = verifiedUsersCache[telegramId];
+  const userEverVerified = isUserEverVerified(telegramId) || !!cachedVerified?.phone;
+  const effectivePhone = cachedVerified?.phone || '';
+
   const createdUser = localDb.upsertUser({
     telegram_id: telegramId,
-    player_code: playerCode,
+    player_code: cachedVerified?.code || playerCode,
     username: username,
-    first_name: from.first_name || '',
+    first_name: cachedVerified?.name || from.first_name || '',
     full_name: fullName,
+    phone_number: effectivePhone,
     balance: initialMain,
     main_wallet: initialMain,
     play_wallet: initialPlay,
     role: userRole,
     status: 'active',
     is_blocked: false,
+    is_verified: userEverVerified,
     referred_by: (referredBy && String(referredBy) !== telegramId) ? String(referredBy) : undefined,
   });
 
@@ -708,9 +778,9 @@ async function getOrCreateTelegramUser(from: {
     balance: createdUser.balance,
     isNew: true,
     registered: true,
-    hasPhone: false,
-    phoneNumber: '',
-    playerCode,
+    hasPhone: userEverVerified,
+    phoneNumber: effectivePhone,
+    playerCode: createdUser.player_code,
     role: userRole,
     status: 'active',
     user: createdUser,
@@ -722,13 +792,23 @@ async function getOrCreateTelegramUser(from: {
  */
 async function updateUserPhone(telegramId: string, phoneNumber: string) {
   const success = localDb.updateUserPhone(telegramId, phoneNumber);
-  console.log(`✅ Secure Local DB phone updated for ${telegramId}: ${phoneNumber}`);
+  markTelegramUserPermanentlyVerified(telegramId, phoneNumber);
+  console.log(`✅ Secure Local DB & permanent cache phone updated for ${telegramId}: ${phoneNumber}`);
 
-  // Optional background sync with Supabase if connected
+  try {
+    await upsertPostgresUser({
+      telegram_id: telegramId,
+      phone_number: phoneNumber,
+      is_verified: true,
+      status: 'active',
+    });
+  } catch {}
+
+  // Sync with Supabase
   try {
     const client = getSupabase();
     if (client) {
-      void client.from('users').update({ phone_number: phoneNumber, is_verified: true }).eq('telegram_id', telegramId);
+      void client.from('users').update({ phone_number: phoneNumber, is_verified: true, status: 'active', updated_at: new Date().toISOString() }).eq('telegram_id', telegramId);
     }
   } catch {}
 
@@ -1350,6 +1430,23 @@ async function processTelegramUpdate(update: any, botToken: string) {
       getOrCreateTelegramUser(anyFromUser).catch((err) =>
         console.warn(`Failed to auto-upsert user ${anyFromUser.id}:`, err)
       );
+
+      // Check if user is banned/blocked by admin
+      if (!isAdminUser(anyFromUser.id)) {
+        const checkedUser = localDb.getUser(anyFromUser.id);
+        if (checkedUser && (checkedUser.is_blocked || checkedUser.status === 'blocked')) {
+          const banReason = checkedUser.ban_reason || 'የአገልግሎት ደንብ መጣስ (Terms Violation)';
+          const banNotice =
+            `🚫 <b>ይቅርታ፣ አካውንትዎ ታግዷል (Account Suspended)!</b>\n\n` +
+            `👤 <b>ተጫዋች፦</b> ${checkedUser.first_name || 'Player'}\n` +
+            `🆔 <b>Player Code፦</b> <code>${checkedUser.player_code}</code>\n` +
+            `⚠️ <b>የእገዳ ምክንያት፦</b> ${banReason}\n\n` +
+            `ለተጨማሪ መረጃ እባክዎ ዋና አስተዳዳሪውን (Admin) ያነጋግሩ።`;
+          const targetChat = update?.message?.chat?.id || anyFromUser.id;
+          await sendTelegramMessage(botToken, targetChat, banNotice);
+          return;
+        }
+      }
     }
 
     // 1. Handle contact sharing (when user clicks "Share Contact")
@@ -1519,8 +1616,11 @@ async function processTelegramUpdate(update: any, botToken: string) {
           notes: caption ? `Caption: ${caption} | Requested: ${parsedAmount} ETB` : `Telegram screenshot upload (${parsedAmount} ETB)`,
         };
 
-        // 1. Persist transaction immediately to local secure database
+        // 1. Persist transaction immediately to local secure database & Postgres
         localDb.addTransaction(newTx);
+        try {
+          await savePostgresTransaction(newTx);
+        } catch {}
 
         // 2. Sync to Supabase transactions table immediately
         try {
@@ -1574,7 +1674,7 @@ async function processTelegramUpdate(update: any, botToken: string) {
 
         // 4. Instant photo alert to Admin
         const adminId = '908336796';
-        const adminLink = `https://salery-bingo-1.vercel.app/?view=admin&new_tx=${encodeURIComponent(JSON.stringify(newTx))}`;
+        const adminLink = `https://salery-bingo-1.vercel.app/admin`;
         const adminAlertText =
           `🔔 <b>አዲስ የዲፖዚት ጥያቄ ቀርቧል!</b>\n\n` +
           `👤 <b>ተጫዋች፦</b> ${playerName} (<code>${playerCode}</code>)\n` +
@@ -1583,11 +1683,27 @@ async function processTelegramUpdate(update: any, botToken: string) {
           `🆔 <b>Telegram ID፦</b> <code>${fromUser.id}</code>\n\n` +
           `👇 <b>በአድሚን ፓነል ለማጽደቅ ወይም ውድቅ ለማድረግ እዚህ ይጫኑ፦</b>`;
 
-        sendTelegramMessage(botToken, adminId, adminAlertText, {
-          inline_keyboard: [
-            [{ text: '👑 አድሚን ፓነል ክፈት (Open Admin)', url: adminLink }],
-          ],
-        }).catch(() => {});
+        try {
+          if (fileId) {
+            await sendTelegramPhoto(botToken, Number(adminId), fileId, adminAlertText, {
+              inline_keyboard: [
+                [{ text: '👑 አድሚን ፓነል ክፈት (Open Admin)', url: adminLink }],
+              ],
+            });
+          } else {
+            await sendTelegramMessage(botToken, adminId, adminAlertText, {
+              inline_keyboard: [
+                [{ text: '👑 አድሚን ፓነል ክፈት (Open Admin)', url: adminLink }],
+              ],
+            });
+          }
+        } catch {
+          sendTelegramMessage(botToken, adminId, adminAlertText, {
+            inline_keyboard: [
+              [{ text: '👑 አድሚን ፓነል ክፈት (Open Admin)', url: adminLink }],
+            ],
+          }).catch(() => {});
+        }
 
         // 3. Clean, simple user confirmation response (Player only)
         const userReply =
@@ -1852,8 +1968,8 @@ async function processTelegramUpdate(update: any, botToken: string) {
         const userRecord = localDb.getUser(fromUser.id);
         const currentBalance = userResult.balance !== undefined ? userResult.balance : (userRecord?.balance ?? (isAdmin ? 24560 : 0));
         const playerCode = userResult.playerCode || userRecord?.player_code || generatePlayerCode(fromUser.id);
-        const userPhone = userResult.phoneNumber || userRecord?.phone_number || '';
-        const isVerified = !!(userPhone && String(userPhone).trim()) || !!userRecord?.is_verified;
+        const userPhone = userResult.phoneNumber || userRecord?.phone_number || verifiedUsersCache[String(fromUser.id)]?.phone || '';
+        const isVerified = isUserEverVerified(fromUser.id) || !!(userPhone && String(userPhone).trim()) || !!userRecord?.is_verified;
 
         // Guaranteed explicit sync to Supabase database
         try {
@@ -3257,6 +3373,40 @@ async function startServer() {
       for (const a of getAdminTelegramIds()) {
         if (a && !isNaN(Number(a))) recipientSet.add(String(a));
       }
+
+      // Verified users cache
+      for (const vId of Object.keys(verifiedUsersCache)) {
+        if (vId && !isNaN(Number(vId))) {
+          recipientSet.add(String(vId));
+        }
+      }
+
+      // Postgres users
+      try {
+        const pgUsers = await getPostgresUsers();
+        if (Array.isArray(pgUsers)) {
+          for (const pu of pgUsers) {
+            if (pu.telegram_id && !isNaN(Number(pu.telegram_id))) {
+              recipientSet.add(String(pu.telegram_id));
+            }
+          }
+        }
+      } catch {}
+
+      // Supabase users
+      try {
+        const supaClient = getSupabase();
+        if (supaClient) {
+          const { data: sUsers } = await supaClient.from('users').select('telegram_id');
+          if (Array.isArray(sUsers)) {
+            for (const su of sUsers) {
+              if (su.telegram_id && !isNaN(Number(su.telegram_id))) {
+                recipientSet.add(String(su.telegram_id));
+              }
+            }
+          }
+        }
+      } catch {}
 
       let sentAttemptCount = 0;
       let deliveredCount = 0;

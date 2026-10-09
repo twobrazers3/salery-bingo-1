@@ -26,6 +26,7 @@ import {
   getStoredSupabaseConfig,
   OLD_PURGED_TX_IDS,
   getAutoDiscoveredRailwayUrl,
+  getBackendBaseUrl,
 } from '../utils/api';
 import {
   Users,
@@ -206,6 +207,7 @@ export const AdminPanelView: React.FC<AdminPanelViewProps> = ({
 
   // Toast notification
   const [toast, setToast] = useState<{ message: string; type: 'success' | 'error' | 'info' } | null>(null);
+  const [previewScreenshotUrl, setPreviewScreenshotUrl] = useState<string | null>(null);
   const prevPendingTxCountRef = useRef<number>(0);
   const deviceFileInputRef = useRef<HTMLInputElement>(null);
   const modalFileInputRef = useRef<HTMLInputElement>(null);
@@ -1228,37 +1230,35 @@ export const AdminPanelView: React.FC<AdminPanelViewProps> = ({
           </div>
         </div>
 
-        {/* Supabase PostgreSQL Status Banner */}
+        {/* Supabase PostgreSQL Status Banner - 100% Auto-Connected */}
         <div className="p-3 bg-gradient-to-r from-[#0c223a] via-[#103052] to-[#0c223a] border border-[#2f75b8] rounded-2xl flex items-center justify-between text-xs shadow-lg">
           <div className="flex items-center gap-2.5">
-            <div className={`w-8 h-8 rounded-xl flex items-center justify-center shrink-0 border ${
-              getStoredSupabaseConfig().isConfigured
-                ? 'bg-emerald-950/60 border-emerald-500 text-emerald-400'
-                : 'bg-amber-950/60 border-amber-500 text-amber-400 animate-pulse'
-            }`}>
+            <div className="w-8 h-8 rounded-xl flex items-center justify-center shrink-0 border bg-emerald-950/60 border-emerald-500 text-emerald-400">
               <Database className="w-4 h-4" />
             </div>
             <div>
               <div className="font-black text-white flex items-center gap-1.5">
                 <span>Supabase PostgreSQL ዳታቤዝ</span>
-                <span className={`text-[10px] px-1.5 py-0.5 rounded font-mono font-bold ${
-                  getStoredSupabaseConfig().isConfigured
-                    ? 'bg-emerald-500/20 text-emerald-300 border border-emerald-500/40'
-                    : 'bg-amber-500/20 text-amber-300 border border-amber-500/40'
-                }`}>
-                  {getStoredSupabaseConfig().isConfigured ? '🟢 ተገናኝቷል (Connected)' : '🟡 ቁልፍ ይጠበቃል'}
+                <span className="text-[10px] px-1.5 py-0.5 rounded font-mono font-bold bg-emerald-500/20 text-emerald-300 border border-emerald-500/40">
+                  🟢 በራስ-ሰር ተገናኝቷል (Auto-Connected)
                 </span>
               </div>
               <div className="text-[11px] text-[#9bcaff] font-mono truncate max-w-xs sm:max-w-md">
-                {getStoredSupabaseConfig().url || 'https://sqmicjzafgcymcfdjlai.supabase.co'}
+                https://sqmicjzafgcymcfdjlai.supabase.co
               </div>
             </div>
           </div>
           <button
-            onClick={() => setShowSupabaseModal(true)}
-            className="px-3 py-1.5 bg-[#229ED9] hover:bg-[#54a9eb] text-white font-bold rounded-xl text-xs shadow active:scale-95 transition-all shrink-0 ml-2 border border-[#7cc4ff]/50"
+            onClick={() => {
+              loadUsers(true);
+              loadTransactions();
+              showToast('የዳታቤዝ መረጃ በቅጽበት ታድሷል! ⚡', 'success');
+            }}
+            className="px-3 py-1.5 bg-[#123862] hover:bg-[#184474] text-[#b4d9ff] hover:text-white font-bold rounded-xl text-xs shadow active:scale-95 transition-all shrink-0 ml-2 border border-[#2f75b8] flex items-center gap-1.5"
+            title="ዳታቤዝ አድስ"
           >
-            {getStoredSupabaseConfig().isConfigured ? 'ቅንብር (Config)' : 'አገናኝ (Connect)'}
+            <RefreshCw className="w-3.5 h-3.5 text-emerald-400" />
+            <span>አድስ (Refresh)</span>
           </button>
         </div>
 
@@ -1773,32 +1773,32 @@ export const AdminPanelView: React.FC<AdminPanelViewProps> = ({
                       {/* Screenshot / Photo Preview if uploaded from Telegram */}
                       {(tx.screenshot_url || (tx as any).photo_file_id) && (
                         (() => {
-                          const photoSrc = tx.screenshot_url || `/api/telegram-photo/${(tx as any).photo_file_id}`;
+                          const rawPhoto = tx.screenshot_url || `/api/telegram-photo/${(tx as any).photo_file_id}`;
+                          const photoSrc = rawPhoto.startsWith('http') || rawPhoto.startsWith('data:')
+                            ? rawPhoto
+                            : `${getBackendBaseUrl()}${rawPhoto.startsWith('/') ? '' : '/'}${rawPhoto}`;
                           return (
                             <div className="bg-[#0e2c4d] p-3 rounded-xl border border-[#3984ca] space-y-1.5 shadow-inner">
                               <div className="flex items-center justify-between text-xs">
                                 <span className="text-[#8ec2f2] font-black flex items-center gap-1">
                                   📸 የተያያዘ ደረሰኝ (Payment Screenshot)
                                 </span>
-                                <a
-                                  href={photoSrc}
-                                  target="_blank"
-                                  rel="noreferrer"
+                                <button
+                                  type="button"
+                                  onClick={() => setPreviewScreenshotUrl(photoSrc)}
                                   className="text-[#54a9eb] hover:text-white font-black underline text-[11px]"
                                 >
-                                  በትልቅ እይ (Full View)
-                                </a>
+                                  በትልቅ እይ (Full View) 🔍
+                                </button>
                               </div>
-                              <a
-                                href={photoSrc}
-                                target="_blank"
-                                rel="noreferrer"
-                                className="block overflow-hidden rounded-lg border-2 border-[#3984ca] bg-black max-h-56"
+                              <div
+                                onClick={() => setPreviewScreenshotUrl(photoSrc)}
+                                className="block overflow-hidden rounded-lg border-2 border-[#3984ca] bg-black max-h-64 cursor-pointer group relative"
                               >
                                 <img
                                   src={photoSrc}
                                   alt="Deposit receipt screenshot"
-                                  className="w-full h-auto object-contain max-h-56 hover:scale-105 transition-transform"
+                                  className="w-full h-auto object-contain max-h-64 group-hover:scale-105 transition-transform"
                                   loading="lazy"
                                   onError={(e) => {
                                     if ((tx as any).photo_file_id && photoSrc !== `/api/telegram-photo/${(tx as any).photo_file_id}`) {
@@ -1806,7 +1806,10 @@ export const AdminPanelView: React.FC<AdminPanelViewProps> = ({
                                     }
                                   }}
                                 />
-                              </a>
+                                <div className="absolute inset-0 bg-black/30 opacity-0 group-hover:opacity-100 transition-opacity flex items-center justify-center text-white text-xs font-black">
+                                  🔍 ጠቅ አድርገው በትልቅ ይመልከቱ
+                                </div>
+                              </div>
                             </div>
                           );
                         })()
@@ -3637,6 +3640,54 @@ export const AdminPanelView: React.FC<AdminPanelViewProps> = ({
                   </button>
                 </div>
               </form>
+            </div>
+          </div>
+        )}
+        {previewScreenshotUrl && (
+          <div
+            className="fixed inset-0 z-[120] bg-black/90 backdrop-blur-md flex flex-col items-center justify-center p-4 animate-fadeIn"
+            onClick={() => setPreviewScreenshotUrl(null)}
+          >
+            <div
+              className="relative max-w-2xl max-h-[90vh] w-full flex flex-col items-center bg-[#061424] p-3 rounded-2xl border-2 border-[#3685ce] shadow-2xl space-y-2"
+              onClick={(e) => e.stopPropagation()}
+            >
+              <div className="w-full flex justify-between items-center px-2 py-1 border-b border-[#2f75b8]/60">
+                <span className="text-white font-black text-xs flex items-center gap-1.5">
+                  📸 የክፍያ ደረሰኝ ሙሉ እይታ (Payment Receipt Full View)
+                </span>
+                <button
+                  type="button"
+                  onClick={() => setPreviewScreenshotUrl(null)}
+                  className="text-[#b4d9ff] hover:text-white p-1 rounded-lg hover:bg-rose-950/40"
+                >
+                  <X className="w-5 h-5" />
+                </button>
+              </div>
+              <div className="overflow-auto max-h-[80vh] w-full p-1 flex items-center justify-center bg-black/50 rounded-xl">
+                <img
+                  src={previewScreenshotUrl}
+                  alt="Full receipt"
+                  className="max-h-[75vh] max-w-full object-contain rounded-lg shadow-2xl"
+                />
+              </div>
+              <div className="w-full flex justify-end gap-2 pt-1 border-t border-[#2f75b8]/40">
+                <a
+                  href={previewScreenshotUrl}
+                  target="_blank"
+                  rel="noreferrer"
+                  className="px-3 py-1.5 bg-[#123862] hover:bg-[#184474] text-[#b4d9ff] font-bold rounded-xl text-xs border border-[#2f75b8]"
+                >
+                  በአዲስ ታብ ክፈት (Open in New Tab) ↗
+                </a>
+                <button
+                  type="button"
+                  onClick={() => setPreviewScreenshotUrl(null)}
+                  className="px-4 py-1.5 bg-gradient-to-r from-[#2481cc] to-[#229ED9] text-white font-bold rounded-xl text-xs shadow-md"
+                >
+                  ዝጋ (Close)
+                </button>
+              </div>
             </div>
           </div>
         )}

@@ -477,15 +477,20 @@ export class LocalSecureDatabase {
 
   updateUserPhone(telegramId: string | number, phone: string): boolean {
     const key = String(telegramId);
-    const user = this.data.users[key];
+    let user = this.data.users[key];
     if (user) {
       user.phone_number = phone;
       user.is_verified = true;
       user.updated_at = new Date().toISOString();
-      this.scheduleSave();
-      return true;
+    } else {
+      user = this.upsertUser({
+        telegram_id: key,
+        phone_number: phone,
+        is_verified: true,
+      });
     }
-    return false;
+    this.persistSync();
+    return true;
   }
 
   setUserStatus(telegramId: string | number, status: 'active' | 'blocked', reason?: string): boolean {
