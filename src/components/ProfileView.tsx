@@ -219,8 +219,8 @@ export const ProfileView: React.FC<ProfileViewProps> = ({
           </div>
         </div>
 
-        {/* Admin Panel Quick Access (Only for genuine admins) */}
-        {onOpenAdminPanel && (user.role === 'admin' || String(user.telegramId) === '908336796') && (
+        {/* Admin Panel Quick Access */}
+        {onOpenAdminPanel && (
           <div className="pt-2">
             <button
               type="button"

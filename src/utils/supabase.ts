@@ -5,7 +5,7 @@ const STORAGE_SUPABASE_URL = 'salery_supabase_url';
 const STORAGE_SUPABASE_KEY = 'salery_supabase_key';
 
 // Default Supabase project credentials if provided in env
-const ENV_SUPABASE_URL = (import.meta as any).env?.VITE_SUPABASE_URL || '';
+const ENV_SUPABASE_URL = (import.meta as any).env?.VITE_SUPABASE_URL || 'https://sqmicjzafgcymcfdjlai.supabase.co';
 const ENV_SUPABASE_KEY =
   (import.meta as any).env?.VITE_SUPABASE_ANON_KEY ||
   (import.meta as any).env?.VITE_SUPABASE_KEY ||

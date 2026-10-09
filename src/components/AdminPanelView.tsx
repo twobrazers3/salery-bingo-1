@@ -1228,6 +1228,40 @@ export const AdminPanelView: React.FC<AdminPanelViewProps> = ({
           </div>
         </div>
 
+        {/* Supabase PostgreSQL Status Banner */}
+        <div className="p-3 bg-gradient-to-r from-[#0c223a] via-[#103052] to-[#0c223a] border border-[#2f75b8] rounded-2xl flex items-center justify-between text-xs shadow-lg">
+          <div className="flex items-center gap-2.5">
+            <div className={`w-8 h-8 rounded-xl flex items-center justify-center shrink-0 border ${
+              getStoredSupabaseConfig().isConfigured
+                ? 'bg-emerald-950/60 border-emerald-500 text-emerald-400'
+                : 'bg-amber-950/60 border-amber-500 text-amber-400 animate-pulse'
+            }`}>
+              <Database className="w-4 h-4" />
+            </div>
+            <div>
+              <div className="font-black text-white flex items-center gap-1.5">
+                <span>Supabase PostgreSQL ዳታቤዝ</span>
+                <span className={`text-[10px] px-1.5 py-0.5 rounded font-mono font-bold ${
+                  getStoredSupabaseConfig().isConfigured
+                    ? 'bg-emerald-500/20 text-emerald-300 border border-emerald-500/40'
+                    : 'bg-amber-500/20 text-amber-300 border border-amber-500/40'
+                }`}>
+                  {getStoredSupabaseConfig().isConfigured ? '🟢 ተገናኝቷል (Connected)' : '🟡 ቁልፍ ይጠበቃል'}
+                </span>
+              </div>
+              <div className="text-[11px] text-[#9bcaff] font-mono truncate max-w-xs sm:max-w-md">
+                {getStoredSupabaseConfig().url || 'https://sqmicjzafgcymcfdjlai.supabase.co'}
+              </div>
+            </div>
+          </div>
+          <button
+            onClick={() => setShowSupabaseModal(true)}
+            className="px-3 py-1.5 bg-[#229ED9] hover:bg-[#54a9eb] text-white font-bold rounded-xl text-xs shadow active:scale-95 transition-all shrink-0 ml-2 border border-[#7cc4ff]/50"
+          >
+            {getStoredSupabaseConfig().isConfigured ? 'ቅንብር (Config)' : 'አገናኝ (Connect)'}
+          </button>
+        </div>
+
         {/* Top Metric Cards - Telegram Blue Theme */}
         <div className="grid grid-cols-2 sm:grid-cols-5 gap-2.5">
           <div className="bg-gradient-to-br from-[#174678] via-[#194c82] to-[#113760] border-2 border-[#3684cd] rounded-2xl p-3.5 flex flex-col justify-between shadow-xl shadow-[#081d33]/50 hover:border-[#5bb0fc] transition-all">

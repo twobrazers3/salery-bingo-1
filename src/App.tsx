@@ -1332,7 +1332,19 @@ export default function App() {
 
   const isLiveGameActive = status === 'in_progress' || status === 'paused' || status === 'countdown' || status === 'game_over';
 
-  if ((user.is_blocked || user.status === 'blocked') && !showAdminPanel) {
+  if (showAdminPanel) {
+    return (
+      <div className="min-h-screen bg-[#040810] text-slate-100">
+        <AdminPanelView
+          onBack={handleCloseAdminPanel}
+          adminTelegramId={user.telegramId}
+          onRefreshUserBalance={() => refreshUserData()}
+        />
+      </div>
+    );
+  }
+
+  if (user.is_blocked || user.status === 'blocked') {
     return (
       <BannedUserView
         user={user}
@@ -1492,16 +1504,6 @@ export default function App() {
         />
       )}
 
-      {/* ADMIN PANEL OVERLAY */}
-      {showAdminPanel && (
-        <div className="fixed inset-0 z-50 bg-[#0f0a1c] overflow-y-auto">
-          <AdminPanelView
-            onBack={handleCloseAdminPanel}
-            adminTelegramId={user.telegramId}
-            onRefreshUserBalance={() => refreshUserData()}
-          />
-        </div>
-      )}
     </div>
   );
 }
