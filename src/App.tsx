@@ -14,7 +14,9 @@ import {
   checkCardWinningPatterns,
   calculateNumbersNeeded,
   generateCompetitors,
-  getLetterForNumber
+  getLetterForNumber,
+  getGlobalBingoCycle,
+  getDeterministicRoundDeck
 } from './utils/bingoLogic';
 import { sounds } from './utils/audio';
 import { translations } from './utils/translations';
@@ -1022,6 +1024,78 @@ export default function App() {
     }
   }, []);
 
+  // Real-time synchronized ball calling loop when in progress
+  useEffect(() => {
+    if (status !== 'in_progress') return;
+
+    const cycle = getGlobalBingoCycle();
+    const deck = getDeterministicRoundDeck(cycle.cycleIndex);
+    let ballIdx = 0;
+
+    const interval = setInterval(() => {
+      // If socket is actively connected and drawing balls, yield to socket
+      if (gameSocketRef.current?.connected && Date.now() - (lastBallDrawnTimestampRef.current || 0) < 3500) {
+        return;
+      }
+
+      if (statusRef.current !== 'in_progress') {
+        clearInterval(interval);
+        return;
+      }
+      if (ballIdx >= deck.length) {
+        clearInterval(interval);
+        return;
+      }
+
+      const number = deck[ballIdx++];
+      const ball = { number, letter: getLetterForNumber(number), id: `ball-${number}` };
+      lastBallDrawnTimestampRef.current = Date.now();
+      setCurrentBall(ball);
+      setCalledSet((prev) => {
+        const next = new Set(prev);
+        next.add(number);
+        return next;
+      });
+      setCalledBalls((prev) => [ball, ...prev]);
+
+      setCards((prevCards) => {
+        let winningCardToClaim: BingoCardModel | null = null;
+        const nextCards = prevCards.map((card) => {
+          const cells = card.cells.map((row) =>
+            row.map((cell) => ({
+              ...cell,
+              isDaubed: cell.isFree || (cell.number === number ? (settingsRef.current.autoDaub || cell.isDaubed) : cell.isDaubed),
+            }))
+          );
+          const updatedCard = { ...card, cells };
+          const win = checkCardWinningPatterns(updatedCard, settingsRef.current.language);
+          const updated = {
+            ...updatedCard,
+            numbersNeeded: calculateNumbersNeeded(updatedCard),
+            hasWon: win.hasWon,
+            winningPatternName: win.patternName,
+          };
+          if (win.hasWon && !winningCardToClaim) winningCardToClaim = updated;
+          return updated;
+        });
+
+        if (winningCardToClaim && statusRef.current === 'in_progress') {
+          setTimeout(() => {
+            if (handleClaimBingoRef.current) {
+              handleClaimBingoRef.current(winningCardToClaim!);
+            }
+          }, 0);
+        }
+
+        return nextCards;
+      });
+
+      sounds.playCalledNumber({ letter: ball.letter, number: ball.number });
+    }, 2800);
+
+    return () => clearInterval(interval);
+  }, [status]);
+
   // Step 1: Open Cartela Selection View or Resume Active Game
   const handleOpenCartelaSelection = () => {
     setActiveTab('game');
@@ -1139,10 +1213,10 @@ export default function App() {
       setStatus(result.state.status === 'finished' ? 'game_over' : 'in_progress');
     } catch (error: any) {
       activeRoomRequestedRef.current = false;
-      console.warn('Game room join issue:', error);
-      showToast('⚠️ ከጨዋታ ሰርቨሩ ጋር መገናኘት አልተቻለም፤ እባክዎ ጥቂት ቆይተው እንደገና ይሞክሩ');
-      sounds.playBeep(false);
-      setStatus('cartela_select');
+      console.warn('Network socket join issue, entering synchronized round:', error);
+      setCards(selectedCards);
+      sounds.playBeep(true);
+      setStatus('in_progress');
     }
   };
 

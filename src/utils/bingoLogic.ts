@@ -368,7 +368,6 @@ export function generateCompetitors(): CompetitorPlayer[] {
   }));
 }
 
-export const GLOBAL_ROUND_CYCLE_MS = 75_000;
 export const GLOBAL_SELECTION_WINDOW_MS = 35_000;
 
 export interface GlobalBingoCycleInfo {
@@ -376,29 +375,34 @@ export interface GlobalBingoCycleInfo {
   gameId: string;
   cycleStart: number;
   selectionEndsAt: number;
-  roundEndsAt: number;
-  isSelectionPhase: boolean;
   remainingSeconds: number;
 }
 
 export function getGlobalBingoCycle(now = Date.now()): GlobalBingoCycleInfo {
-  const cycleIndex = Math.floor(now / GLOBAL_ROUND_CYCLE_MS);
-  const cycleStart = cycleIndex * GLOBAL_ROUND_CYCLE_MS;
+  const cycleIndex = Math.floor(now / GLOBAL_SELECTION_WINDOW_MS);
+  const cycleStart = cycleIndex * GLOBAL_SELECTION_WINDOW_MS;
   const selectionEndsAt = cycleStart + GLOBAL_SELECTION_WINDOW_MS;
-  const roundEndsAt = cycleStart + GLOBAL_ROUND_CYCLE_MS;
-
-  const isSelectionPhase = now < selectionEndsAt;
-  const remainingSeconds = isSelectionPhase
-    ? Math.max(0, Math.ceil((selectionEndsAt - now) / 1000))
-    : Math.max(0, Math.ceil((roundEndsAt - now) / 1000));
+  const remainingSeconds = Math.max(0, Math.ceil((selectionEndsAt - now) / 1000));
 
   return {
     cycleIndex,
     gameId: `salery-live-${cycleIndex}`,
     cycleStart,
     selectionEndsAt,
-    roundEndsAt,
-    isSelectionPhase,
-    remainingSeconds,
+    remainingSeconds: Math.min(35, remainingSeconds),
   };
+}
+
+export function getDeterministicRoundDeck(cycleIndex: number): number[] {
+  let seed = Math.abs(Math.sin(cycleIndex * 1337 + 42)) * 10000;
+  const rnd = () => {
+    seed = (seed * 9301 + 49297) % 233280;
+    return seed / 233280;
+  };
+  const pool = Array.from({ length: 75 }, (_, i) => i + 1);
+  for (let i = pool.length - 1; i > 0; i--) {
+    const j = Math.floor(rnd() * (i + 1));
+    [pool[i], pool[j]] = [pool[j], pool[i]];
+  }
+  return pool;
 }

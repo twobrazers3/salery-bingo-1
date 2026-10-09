@@ -1,6 +1,6 @@
 import React, { useState, useEffect, useMemo, useCallback } from 'react';
 import { GameSettings, UserProfile, BingoCardModel } from '../types';
-import { generateCartelaByNumber, getGlobalBingoCycle, GLOBAL_SELECTION_WINDOW_MS, GLOBAL_ROUND_CYCLE_MS } from '../utils/bingoLogic';
+import { generateCartelaByNumber, getGlobalBingoCycle, GLOBAL_SELECTION_WINDOW_MS } from '../utils/bingoLogic';
 import { ArrowLeft, RotateCw, Star, ChevronDown } from 'lucide-react';
 import { sounds } from '../utils/audio';
 
@@ -36,13 +36,13 @@ export const CartelaSelectionView: React.FC<CartelaSelectionViewProps> = ({
   socket,
   roomStartsAt,
 }) => {
-  // Synchronized server timestamp target
+  // Synchronized server timestamp target (strictly 35s global cycle)
   const [serverStartsAt, setServerStartsAt] = useState<number>(() => {
     if (typeof roomStartsAt === 'number' && roomStartsAt > Date.now()) {
       return roomStartsAt;
     }
     const cycle = getGlobalBingoCycle();
-    return cycle.isSelectionPhase ? cycle.selectionEndsAt : cycle.roundEndsAt + GLOBAL_SELECTION_WINDOW_MS;
+    return cycle.selectionEndsAt;
   });
 
   const computeRemaining = useCallback((targetTs: number) => {
@@ -283,21 +283,20 @@ export const CartelaSelectionView: React.FC<CartelaSelectionViewProps> = ({
         target = roomStartsAt;
       } else if (!target || target <= now) {
         const cycle = getGlobalBingoCycle(now);
-        target = cycle.isSelectionPhase ? cycle.selectionEndsAt : cycle.cycleStart + GLOBAL_ROUND_CYCLE_MS + GLOBAL_SELECTION_WINDOW_MS;
+        target = cycle.selectionEndsAt;
         setServerStartsAt(target);
       }
 
-      const remaining = Math.max(0, Math.ceil((target - now) / 1000));
+      const remaining = Math.min(35, Math.max(0, Math.ceil((target - now) / 1000)));
       setTimeLeft(remaining);
 
       if (remaining <= 0 && !hasStartedRef.current) {
         if (selectedCartelaIdsRef.current.length > 0) {
           handleStartRound();
         } else {
-          // Advance to next synchronized cycle
-          const nextCycle = getGlobalBingoCycle(now + 2000);
-          const nextTarget = nextCycle.selectionEndsAt;
-          setServerStartsAt(nextTarget);
+          // Advance to next synchronized 35s cycle
+          const nextCycle = getGlobalBingoCycle(now + 1000);
+          setServerStartsAt(nextCycle.selectionEndsAt);
           setTimeLeft(nextCycle.remainingSeconds);
         }
       }
