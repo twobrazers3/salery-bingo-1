@@ -1337,17 +1337,17 @@ function validateTelegramInitData(initData, botToken, allowLocalMock = true) {
   };
 }
 function getNextAlignedStartsAt(now = Date.now()) {
-  const cycleIndex = Math.floor(now / 75e3);
-  const cycleStart = cycleIndex * 75e3;
+  const cycleIndex = Math.floor(now / 35e3);
+  const cycleStart = cycleIndex * 35e3;
   let target = cycleStart + 35e3;
-  if (target <= now + 2e3) {
-    target = (cycleIndex + 1) * 75e3 + 35e3;
+  if (target <= now + 1500) {
+    target = (cycleIndex + 1) * 35e3 + 35e3;
   }
   return target;
 }
 function makeRoomState(stake) {
   const startsAt = getNextAlignedStartsAt();
-  const cycleIndex = Math.floor(startsAt / 75e3);
+  const cycleIndex = Math.floor(startsAt / 35e3);
   return {
     gameId: `salery-live-${cycleIndex}`,
     stake,
@@ -1595,7 +1595,7 @@ function attachBingoRooms(io, botToken) {
       if (!latest || latest.status !== "waiting") return;
       if (latest.players.length === 0) {
         latest.startsAt = getNextAlignedStartsAt();
-        const cycleIndex = Math.floor(latest.startsAt / 75e3);
+        const cycleIndex = Math.floor(latest.startsAt / 35e3);
         latest.gameId = `salery-live-${cycleIndex}`;
         localRooms.set(roomId, latest);
         sendRoomState(io, roomId, latest);

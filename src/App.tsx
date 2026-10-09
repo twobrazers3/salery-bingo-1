@@ -1030,7 +1030,21 @@ export default function App() {
 
     const cycle = getGlobalBingoCycle();
     const deck = getDeterministicRoundDeck(cycle.cycleIndex);
-    let ballIdx = 0;
+    const roundStartedAt = cycle.selectionEndsAt;
+    const initialElapsed = Math.max(0, Date.now() - roundStartedAt);
+    let ballIdx = Math.floor(initialElapsed / 2800);
+
+    // If game was joined midway, pre-populate already called numbers
+    if (ballIdx > 0) {
+      const alreadyDrawn = deck.slice(0, Math.min(ballIdx, deck.length));
+      const alreadySet = new Set(alreadyDrawn);
+      setCalledSet(alreadySet);
+      setCalledBalls(alreadyDrawn.map((n) => ({ number: n, letter: getLetterForNumber(n), id: `ball-${n}` })).reverse());
+      if (alreadyDrawn.length > 0) {
+        const last = alreadyDrawn[alreadyDrawn.length - 1];
+        setCurrentBall({ number: last, letter: getLetterForNumber(last), id: `ball-${last}` });
+      }
+    }
 
     const interval = setInterval(() => {
       // If socket is actively connected and drawing balls, yield to socket
@@ -1042,12 +1056,22 @@ export default function App() {
         clearInterval(interval);
         return;
       }
+
+      const currentElapsed = Math.max(0, Date.now() - roundStartedAt);
+      const targetIdx = Math.floor(currentElapsed / 2800);
+      if (targetIdx <= ballIdx && ballIdx > 0) {
+        return;
+      }
+      ballIdx = targetIdx;
+
       if (ballIdx >= deck.length) {
         clearInterval(interval);
         return;
       }
 
-      const number = deck[ballIdx++];
+      const number = deck[ballIdx];
+      if (!number) return;
+
       const ball = { number, letter: getLetterForNumber(number), id: `ball-${number}` };
       lastBallDrawnTimestampRef.current = Date.now();
       setCurrentBall(ball);
@@ -1091,7 +1115,7 @@ export default function App() {
       });
 
       sounds.playCalledNumber({ letter: ball.letter, number: ball.number });
-    }, 2800);
+    }, 1000);
 
     return () => clearInterval(interval);
   }, [status]);
@@ -1127,8 +1151,8 @@ export default function App() {
   // Step 2: Confirm Selected Cartelas and Launch Round
   const handleConfirmCartelaSelection = async (
     selectedCards: BingoCardModel[],
-    _roomPlayersCount?: number,
-    _totalRoomCartelas?: number,
+    roomPlayersCount?: number,
+    totalRoomCartelas?: number,
     walletType: 'main_wallet' | 'play_wallet' = 'main_wallet'
   ) => {
     hasJoinedRoomOnceRef.current = true;
@@ -1146,7 +1170,7 @@ export default function App() {
       const socket = getOrCreateSocket();
       if (!socket.connected) {
         await new Promise<void>((resolve, reject) => {
-          const timeout = setTimeout(() => reject(new Error('Room connection timed out')), 8_000);
+          const timeout = setTimeout(() => reject(new Error('Room connection timed out')), 1_500);
           socket.once('connect', () => {
             clearTimeout(timeout);
             resolve();
@@ -1214,6 +1238,14 @@ export default function App() {
     } catch (error: any) {
       activeRoomRequestedRef.current = false;
       console.warn('Network socket join issue, entering synchronized round:', error);
+      const cycle = getGlobalBingoCycle();
+      setActiveGameId(cycle.gameId);
+      const playersCount = Math.max(12, roomPlayersCount || 15);
+      const totalCartelas = Math.max(playersCount * 2, totalRoomCartelas || 30);
+      setActiveRoomPlayers(playersCount);
+      setActiveRoomCartelas(totalCartelas);
+      setPrizePool(Math.floor(totalCartelas * settings.selectedStake * 0.8));
+      setCompetitors(generateCompetitors());
       setCards(selectedCards);
       sounds.playBeep(true);
       setStatus('in_progress');

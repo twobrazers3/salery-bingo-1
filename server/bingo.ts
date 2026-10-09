@@ -74,18 +74,18 @@ export function validateTelegramInitData(initData: string, botToken: string, all
 }
 
 function getNextAlignedStartsAt(now = Date.now()): number {
-  const cycleIndex = Math.floor(now / 75000);
-  const cycleStart = cycleIndex * 75000;
+  const cycleIndex = Math.floor(now / 35000);
+  const cycleStart = cycleIndex * 35000;
   let target = cycleStart + 35000;
-  if (target <= now + 2000) {
-    target = (cycleIndex + 1) * 75000 + 35000;
+  if (target <= now + 1500) {
+    target = (cycleIndex + 1) * 35000 + 35000;
   }
   return target;
 }
 
 function makeRoomState(stake: number): BingoRoomState {
   const startsAt = getNextAlignedStartsAt();
-  const cycleIndex = Math.floor(startsAt / 75000);
+  const cycleIndex = Math.floor(startsAt / 35000);
   return {
     gameId: `salery-live-${cycleIndex}`,
     stake,
@@ -375,7 +375,7 @@ export function attachBingoRooms(io: Server, botToken: string) {
       // Only restart countdown if NO players joined with cartelas
       if (latest.players.length === 0) {
         latest.startsAt = getNextAlignedStartsAt();
-        const cycleIndex = Math.floor(latest.startsAt / 75000);
+        const cycleIndex = Math.floor(latest.startsAt / 35000);
         latest.gameId = `salery-live-${cycleIndex}`;
         localRooms.set(roomId, latest);
         sendRoomState(io, roomId, latest);

@@ -229,15 +229,13 @@ export const CartelaSelectionView: React.FC<CartelaSelectionViewProps> = ({
   }, [activeDisplayIds]);
 
   const handleStartRound = useCallback(() => {
-    const effectiveIds = [...selectedCartelaIdsRef.current];
+    let effectiveIds = [...selectedCartelaIdsRef.current];
 
-    // ONLY start the game if cartelas have actually been selected by the player!
+    // If player hasn't selected cartela before countdown ends, auto-assign 1 cartela so everyone enters together!
     if (effectiveIds.length === 0) {
-      hasStartedRef.current = false;
-      const nextCycle = getGlobalBingoCycle(Date.now() + 2000);
-      setServerStartsAt(nextCycle.selectionEndsAt);
-      setTimeLeft(nextCycle.remainingSeconds);
-      return;
+      const fallbackId = previewCartelaIdRef.current || Math.floor(Math.random() * 400) + 1;
+      effectiveIds = [fallbackId];
+      setSelectedCartelaIds(effectiveIds);
     }
 
     if (hasStartedRef.current) return;
