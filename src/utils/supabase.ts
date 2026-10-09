@@ -79,14 +79,17 @@ export function saveStoredSupabaseConfig(url: string, key: string) {
 
 export function getBrowserSupabaseClient(): SupabaseClient | null {
   const cfg = getStoredSupabaseConfig();
-  if (!cfg.isConfigured) return null;
+  // Require non-empty valid key before calling createClient to prevent "supabaseKey is required" error
+  if (!cfg.url || !cfg.key || typeof cfg.key !== 'string' || cfg.key.trim().length < 10) {
+    return null;
+  }
 
   if (browserClient && activeUrl === cfg.url && activeKey === cfg.key) {
     return browserClient;
   }
 
   try {
-    browserClient = createClient(cfg.url, cfg.key, {
+    browserClient = createClient(cfg.url, cfg.key.trim(), {
       auth: { persistSession: false },
       realtime: {
         params: {
@@ -98,7 +101,7 @@ export function getBrowserSupabaseClient(): SupabaseClient | null {
     activeKey = cfg.key;
     return browserClient;
   } catch (err) {
-    console.error('Failed to create browser Supabase client:', err);
+    console.warn('Browser Supabase client not created (using backend API):', err);
     return null;
   }
 }
